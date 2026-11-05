@@ -1,0 +1,7 @@
+schema = 1
+id = "tern-sidepulse"
+name = "SidePulse for OMP"
+version = "0.1.0"
+description = "Show the OMP sessions in your Tern windows on SidePulse: working, waiting, done, failed."
+icon = "sparkle"
+window = "window.luau"
