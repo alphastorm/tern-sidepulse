@@ -67,7 +67,8 @@ local S = {
 	omp = {} :: { [number]: boolean }, -- classification cache: pane -> true
 	notices = {} :: { [number]: { id: string, kind: string, at: number } },
 	notice_seq = 0,
-	diag = {} :: { [string]: number },
+	diag = {} :: { [string]: number }, -- classification counts of the latest enumeration pass
+	stats = {} :: { [string]: number }, -- cumulative for this VM: budget_pauses, helper_failures
 	last_error = nil :: string?,
 	last_ack = nil :: string?,
 }
@@ -78,6 +79,21 @@ end
 
 local function count(key: string)
 	S.diag[key] = (S.diag[key] or 0) + 1
+end
+
+local function tally(key: string)
+	S.stats[key] = (S.stats[key] or 0) + 1
+end
+
+local function diag_report(): { [string]: number }
+	local merged = {}
+	for key, value in pairs(S.diag) do
+		merged[key] = value
+	end
+	for key, value in pairs(S.stats) do
+		merged[key] = value
+	end
+	return merged
 end
 
 local function warn_once(code: string, detail: string?)
@@ -100,7 +116,7 @@ end
 local function backoff(code: string, detail: string?)
 	S.fail_count += 1
 	S.retry_at = now_ms() + math.min(MAX_BACKOFF_MS, 500 * 2 ^ S.fail_count)
-	count("helper_failures")
+	tally("helper_failures")
 	warn_once(code, detail)
 end
 
@@ -428,7 +444,7 @@ local function start_snapshot(cx: WindowCx)
 		seq = S.seq,
 		coverage = coverage,
 		observations = observations,
-		diag = S.diag,
+		diag = diag_report(),
 	}
 	S.in_flight = true
 	run_helper("snapshot", payload, on_snapshot)
@@ -525,7 +541,7 @@ end)
 
 tern.on("budget", function(ev, _cx)
 	if ev.state == "paused" then
-		count("budget_pauses")
+		tally("budget_pauses")
 	else
 		request_flush()
 	end
@@ -551,7 +567,7 @@ tern.command({
 	title = "SidePulse bridge: doctor",
 	icon = "sparkle",
 	run = function(cx)
-		run_helper("doctor", { window_key = S.window_key, diag = S.diag }, function(body, code, cx2)
+		run_helper("doctor", { window_key = S.window_key, diag = diag_report() }, function(body, code, cx2)
 			if not cx2 then
 				return
 			end
