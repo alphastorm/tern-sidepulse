@@ -1,10 +1,12 @@
 """Shared fixtures: fake SidePulse receivers, in-memory coordinators, and subprocess helpers."""
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import socket
 import subprocess
+import shutil
 import sys
 import tempfile
 import threading
@@ -23,8 +25,10 @@ SENTINEL = "SENTINEL-7f3a-never-leaks"
 
 
 def short_tmpdir(prefix: str = "tsp-") -> Path:
-    """A short path under /tmp so AF_UNIX names stay well under the macOS limit."""
-    return Path(tempfile.mkdtemp(prefix=prefix, dir="/tmp"))
+    """A short path under /tmp so AF_UNIX names stay well under the macOS limit; removed when the run ends."""
+    path = Path(tempfile.mkdtemp(prefix=prefix, dir="/tmp"))
+    atexit.register(shutil.rmtree, path, ignore_errors=True)
+    return path
 
 
 class FakeReceiver(threading.Thread):

@@ -1,4 +1,5 @@
 import os
+import shutil
 import socket
 import unittest
 from pathlib import Path
@@ -26,15 +27,12 @@ class RuntimeDirTest(unittest.TestCase):
         temp_name = str(chosen / f"{SOCKET_NAME}.{os.getpid()}")
         self.assertLessEqual(len(temp_name.encode()), MAX_SOCKET_PATH_BYTES)
         ensure_private_dir(chosen)
+        self.addCleanup(shutil.rmtree, chosen, True)
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             server.bind(temp_name)
         finally:
             server.close()
-            try:
-                os.unlink(temp_name)
-            except FileNotFoundError:
-                pass
 
     def test_short_base_is_kept(self):
         base = short_tmpdir("tsp-p-")

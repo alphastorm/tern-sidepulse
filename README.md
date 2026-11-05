@@ -125,7 +125,7 @@ Developing from a linked checkout: Tern reloads the plugin on every change insid
 ## Development
 
 ```sh
-python3 -m unittest discover -s tests -t . -v
+python3 -B -m unittest discover -s tests -t . -v   # -B: bytecode written into a linked checkout reloads the plugin
 luau-lsp analyze --definitions=types/tern.d.luau window.luau
 ```
 
