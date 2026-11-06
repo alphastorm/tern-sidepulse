@@ -32,6 +32,10 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     if here not in sys.path:
         sys.path.insert(0, here)  # -I leaves the script directory off sys.path
+    if getattr(sys, "pycache_prefix", None) is None:
+        # A plain `python3 bridge.py …` from a shell must not write __pycache__ into the plugin
+        # directory, which Tern watches for reloads; the plugin's own launches cache elsewhere.
+        sys.dont_write_bytecode = True
     from tern_sidepulse.cli import main as cli_main
     from pathlib import Path
 

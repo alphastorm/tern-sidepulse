@@ -26,18 +26,30 @@ def _write_atomic(path: Path, text: str, mode: int = 0o600) -> None:
     os.replace(temp, path)
 
 
+def _tighten_mode(path: Path) -> None:
+    try:
+        if stat.S_IMODE(os.stat(path).st_mode) & 0o077:
+            os.chmod(path, 0o600)
+    except OSError:
+        pass  # never a reason to regenerate or refuse the identity
+
+
 def load_identity(data_dir: Path, create: bool = True) -> dict | None:
     """The install identity (``identity.json``); created once, kept across reinstalls by Tern's data dir."""
     path = data_dir / IDENTITY_NAME
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict) and isinstance(data.get("install_id"), str) and data["install_id"]:
-            return data
+        valid = isinstance(data, dict) and isinstance(data.get("install_id"), str) and bool(data["install_id"])
     except FileNotFoundError:
-        pass
+        valid = False
     except (OSError, ValueError):
         if not create:
             return None
+        valid = False
+    if valid:
+        if create:
+            _tighten_mode(path)  # an identity written by an earlier build was 0644
+        return data
     if not create:
         return None
     import uuid  # only the first coordinator start ever pays for this import
@@ -48,7 +60,7 @@ def load_identity(data_dir: Path, create: bool = True) -> dict | None:
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "plugin": PLUGIN_ID,
     }
-    _write_atomic(path, json.dumps(data, indent=2) + "\n", mode=0o644)
+    _write_atomic(path, json.dumps(data, indent=2) + "\n")
     return data
 
 
@@ -87,7 +99,7 @@ def set_disabled(data_dir: Path, disabled: bool) -> None:
     path = data_dir / DISABLED_NAME
     if disabled:
         data_dir.mkdir(parents=True, exist_ok=True)
-        _write_atomic(path, datetime.now(timezone.utc).isoformat(timespec="seconds") + "\n", mode=0o644)
+        _write_atomic(path, datetime.now(timezone.utc).isoformat(timespec="seconds") + "\n")
     else:
         try:
             path.unlink()

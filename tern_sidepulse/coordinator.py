@@ -558,12 +558,17 @@ class Coordinator:
         self.stop_reason = reason
 
     def shutdown(self) -> None:
-        """Neutralize once on the way out; bounded by the transport's per-family budget."""
+        """Neutralize once on the way out; bounded by the transport's per-family budget.
+
+        This is the last attempt this process will ever make, so retry spacing after a recent
+        failure must not skip it: a receiver that came back on the same socket would otherwise
+        keep the active mode until the next coordinator start.
+        """
         for observer in list(self.observers.values()):
             self._note_retired(observer.generation, "shutdown")
         self.observers.clear()
         self.transport.set_desired(IDLE_READY, force=not self.transport.all_delivered(IDLE_READY))
-        self.transport.tick()
+        self.transport.tick(immediate=True)
 
     # ---- reporting ------------------------------------------------------------------------
 

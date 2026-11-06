@@ -140,5 +140,23 @@ class InternalErrorTest(unittest.TestCase):
         self.assertTrue(any("ZeroDivisionError" in line for line in logs))
 
 
+class ShutdownTest(unittest.TestCase):
+    def test_final_neutral_ignores_retry_spacing(self):
+        # A refresh failed 0.3 s ago (receiver restarting on the same socket); the graceful exit is
+        # the last attempt this process makes, so the 1 s spacing must not skip it.
+        c, clock, sender, _, _ = make_coordinator()
+        activate(c, [working(1)])
+        self.assertEqual(sender.modes_for("events.sock")[-1], "working")
+        sender.refuse.add("events.sock")
+        c.op_resync({})
+        ui = c.transport.families[0]
+        self.assertEqual((ui.failures, ui.pending), (1, True))
+        sender.refuse.discard("events.sock")
+        clock.advance(0.3)
+        c.shutdown()
+        self.assertEqual(sender.modes_for("events.sock")[-1], "idle_ready", "neutral went out on the way down")
+        self.assertEqual(sender.modes_for("relay-events.sock")[-1], "idle_ready")
+
+
 if __name__ == "__main__":
     unittest.main()

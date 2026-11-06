@@ -175,13 +175,14 @@ class SidePulseTransport:
                 family.next_attempt_at = now
         return changed
 
-    def tick(self) -> bool:
-        """Attempt pending deliveries whose retry time has come; returns True when anything was attempted."""
+    def tick(self, immediate: bool = False) -> bool:
+        """Attempt pending deliveries whose retry time has come (every pending one when ``immediate``);
+        returns True when anything was attempted."""
         now = self.clock.monotonic()
         attempted = False
         for family in self.families:
             self._detect_receiver_change(family, now)
-            if not family.pending or now < family.next_attempt_at:
+            if not family.pending or (now < family.next_attempt_at and not immediate):
                 continue
             attempted = True
             family.last_attempt_at = now

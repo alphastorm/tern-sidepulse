@@ -62,7 +62,7 @@ local S = {
 	fence_errors = 0, -- consecutive fence rejections; three in a row back off instead of re-registering at once
 	retry_at = 0,
 	failing = false,
-	omp = {} :: { [number]: boolean }, -- classification cache: pane -> true
+	omp = {} :: { [number]: boolean }, -- last successful classification per pane; refreshed every pass
 	notices = {} :: { [number]: { id: string, kind: string, at: number } },
 	notice_seq = 0,
 	diag = {} :: { [string]: number }, -- classification counts of the latest enumeration pass
@@ -245,12 +245,17 @@ local function enumerate(cx: WindowCx): (string, { any })
 					count("host_unavailable")
 					S.notices[pane] = nil
 				else
-					if not S.omp[pane] then
-						local ok_surface, tree = pcall(function()
-							return cx.session:surface(pane, SURFACE_OPTS)
-						end)
-						if ok_surface and type(tree) == "table" and type(tree.surface) == "table" and tree.surface.role == "omp.session" then
+					-- Re-read the role every pass (0.01–0.1 ms per pane): a pane that stops being an OMP
+					-- session without an invalidating event drops out at the next reconciliation. The
+					-- cached answer only bridges a query that fails outright.
+					local ok_surface, tree = pcall(function()
+						return cx.session:surface(pane, SURFACE_OPTS)
+					end)
+					if ok_surface then
+						if type(tree) == "table" and type(tree.surface) == "table" and tree.surface.role == "omp.session" then
 							S.omp[pane] = true
+						else
+							S.omp[pane] = nil
 						end
 					end
 					if not S.omp[pane] then
@@ -323,16 +328,20 @@ local function run_helper(op: string, payload: any, cb: (any, string?, WindowCx?
 	end
 	-- Mirrors tern_sidepulse.paths.python_flags: isolated, no site-packages, bytecode cached under
 	-- the data directory (the plugin directory is watched for reloads).
-	local argv = { S.python, "-I", "-S", "-X", "pycache_prefix=" .. DATA .. "/pycache", BRIDGE, op, "--data-dir", DATA }
+	local python = S.python
+	local argv = { python, "-I", "-S", "-X", "pycache_prefix=" .. DATA .. "/pycache", BRIDGE, op, "--data-dir", DATA }
 	local opts = { stdin = tern.json.encode(payload), timeout_ms = HELPER_TIMEOUT_MS }
 	local ok, _err = pcall(tern.process.run, argv, opts, function(result: ProcessResult, cx: WindowCx?)
 		local decoded, code = parse_result(result)
 		local too_old = result.status == 3 or (type(decoded) == "table" and decoded.error == "python_too_old")
-		if too_old and S.python ~= nil then
-			-- bridge.py answers with JSON and exit status 3 under an old interpreter: refuse that
-			-- interpreter for this VM and look again; the next attempt uses the replacement.
-			S.rejected[S.python] = true
-			resolve_python()
+		if too_old then
+			-- bridge.py answers with JSON and exit status 3 under an old interpreter: refuse the
+			-- interpreter that answered (a concurrent command's callback may already have moved
+			-- S.python on) and look again; the next attempt uses the replacement.
+			S.rejected[python] = true
+			if S.python == python then
+				resolve_python()
+			end
 			decoded, code = nil, "python_too_old"
 		end
 		cb(decoded, code, cx)
@@ -457,6 +466,9 @@ pump = function(cx: WindowCx)
 		return
 	end
 	if is_disabled() then
+		-- The latch was set outside this window (bridge.py disable, another window): the coordinator
+		-- revoked every generation, and a notice observed meanwhile must not surface after enable.
+		drop_generation()
 		S.dirty = false
 		return
 	end
@@ -549,16 +561,23 @@ end)
 
 -- ---- commands --------------------------------------------------------------------------------
 
-local function toast_result(cx: WindowCx?, title: string, body: any, code: string?)
-	if not cx then
-		return
+-- A helper that fails before it spawns (no interpreter, process API missing) calls back
+-- synchronously with a nil cx; the command's own cx is still live then, so toast through it.
+local function toast(cx: WindowCx?, tone: ToastLevel, title: string, body: string)
+	if cx then
+		pcall(function()
+			cx:toast(tone, title, body)
+		end)
 	end
+end
+
+local function toast_result(cx: WindowCx?, title: string, body: any, code: string?)
 	if body == nil then
-		cx:toast("error", title, code or "helper failed")
+		toast(cx, "error", title, code or "helper failed")
 	elseif body.ok == true then
-		cx:toast("success", title, str(body.desired) or str(body.summary) or "ok")
+		toast(cx, "success", title, str(body.desired) or str(body.summary) or "ok")
 	else
-		cx:toast("error", title, str(body.error) or "error")
+		toast(cx, "error", title, str(body.error) or "error")
 	end
 end
 
@@ -568,9 +587,7 @@ tern.command({
 	icon = "sparkle",
 	run = function(cx)
 		run_helper("doctor", { window_key = S.window_key, diag = diag_report(), inert = S.inert }, function(body, code, cx2)
-			if not cx2 then
-				return
-			end
+			local target = cx2 or cx
 			local prefix = ""
 			if S.inert then
 				prefix = "window: " .. S.inert .. " · "
@@ -578,7 +595,7 @@ tern.command({
 				prefix = "window: no python found · "
 			end
 			if body == nil then
-				cx2:toast("error", "SidePulse bridge doctor", prefix .. (code or "helper failed"))
+				toast(target, "error", "SidePulse bridge doctor", prefix .. (code or "helper failed"))
 				return
 			end
 			local level = str(body.level) or "error"
@@ -587,7 +604,7 @@ tern.command({
 			if type(body.report) == "string" then
 				sub = sub .. " · " .. body.report
 			end
-			cx2:toast(tone, "SidePulse bridge doctor", sub)
+			toast(target, tone, "SidePulse bridge doctor", sub)
 		end)
 	end,
 })
@@ -596,10 +613,10 @@ tern.command({
 	id = "resync",
 	title = "SidePulse bridge: resync",
 	icon = "sparkle",
-	run = function(_cx)
+	run = function(cx)
 		drop_generation() -- fresh registration and a fresh complete snapshot
 		run_helper("resync", {}, function(body, code, cx2)
-			toast_result(cx2, "SidePulse bridge resync", body, code)
+			toast_result(cx2 or cx, "SidePulse bridge resync", body, code)
 			request_flush()
 		end)
 	end,
@@ -609,10 +626,10 @@ tern.command({
 	id = "disable",
 	title = "SidePulse bridge: disable",
 	icon = "sparkle",
-	run = function(_cx)
+	run = function(cx)
 		drop_generation()
 		run_helper("disable", {}, function(body, code, cx2)
-			toast_result(cx2, "SidePulse bridge disabled", body, code)
+			toast_result(cx2 or cx, "SidePulse bridge disabled", body, code)
 		end)
 	end,
 })
@@ -621,10 +638,10 @@ tern.command({
 	id = "enable",
 	title = "SidePulse bridge: enable",
 	icon = "sparkle",
-	run = function(_cx)
+	run = function(cx)
 		drop_generation()
 		run_helper("enable", {}, function(body, code, cx2)
-			toast_result(cx2, "SidePulse bridge enabled", body, code)
+			toast_result(cx2 or cx, "SidePulse bridge enabled", body, code)
 			request_flush()
 		end)
 	end,

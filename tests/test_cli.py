@@ -1,4 +1,7 @@
 import os
+import shutil
+import stat
+import subprocess
 import sys
 import time
 import unittest
@@ -165,6 +168,30 @@ class CliTest(unittest.TestCase):
         run_bridge(["status"], None, self.env)
         cache = Path(self.env["TERN_PLUGIN_DATA"]) / "pycache"
         self.assertTrue(any(cache.rglob("cli*.pyc")), "later helper runs skip compiling the package; the plugin dir stays untouched")
+
+    def test_plain_shell_invocation_writes_no_bytecode_into_the_plugin_dir(self):
+        # The README's `python3 bridge.py status …` has no -B and no pycache prefix; a __pycache__ under
+        # the plugin directory would make Tern reload every window observer.
+        copy = short_tmpdir("tsp-copy-")
+        shutil.copy(BRIDGE, copy / "bridge.py")
+        shutil.copytree(BRIDGE.parent / "tern_sidepulse", copy / "tern_sidepulse", ignore=shutil.ignore_patterns("__pycache__"))
+        env = dict(self.env)
+        env.pop("PYTHONDONTWRITEBYTECODE", None)
+        proc = subprocess.run([sys.executable, str(copy / "bridge.py"), "status"], capture_output=True, env=env, timeout=15)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse((copy / "tern_sidepulse" / "__pycache__").exists())
+
+    def test_identity_and_latch_are_user_private(self):
+        data = Path(self.env["TERN_PLUGIN_DATA"])
+        data.mkdir(parents=True, exist_ok=True)
+        (data / "identity.json").write_text('{"install_id": "older-install", "plugin": "tern-sidepulse"}\n')
+        os.chmod(data / "identity.json", 0o644)  # as an earlier build wrote it
+        _, reg, _ = run_bridge(["register"], {}, self.env)
+        self.assertTrue(reg["ok"], reg)
+        run_bridge(["disable"], None, self.env)
+        for name in ("identity.json", "disabled"):
+            self.assertEqual(stat.S_IMODE(os.stat(data / name).st_mode), 0o600, name)
+        self.assertIn("older-install", (data / "identity.json").read_text(), "tightening the mode keeps the identity")
 
 
 if __name__ == "__main__":
