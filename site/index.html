@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#060809">
+<title>tern-sidepulse — your Oh My Pi (OMP) sessions in Tern, on SidePulse</title>
+<meta name="description" content="Keep running Oh My Pi (OMP) inside Tern. tern-sidepulse sends one status from your open Tern windows, local and remote, to SidePulse: working, waiting, done, failed.">
+<link rel="canonical" href="https://alphastorm.github.io/tern-sidepulse/">
+<link rel="preload" href="fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="site.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta property="og:title" content="tern-sidepulse — your Oh My Pi (OMP) sessions in Tern, on SidePulse">
+<meta property="og:description" content="Keep running Oh My Pi (OMP) inside Tern. tern-sidepulse sends one status from your open Tern windows, local and remote, to SidePulse: working, waiting, done, failed.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://alphastorm.github.io/tern-sidepulse/">
+<meta property="og:image" content="https://alphastorm.github.io/tern-sidepulse/og.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="tern-sidepulse. Your OMP sessions in Tern. On SidePulse. A community Tern window plugin for Oh My Pi sessions.">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "SoftwareApplication",
+ "name": "tern-sidepulse",
+ "applicationCategory": "DeveloperApplication",
+ "operatingSystem": "macOS",
+ "description": "Show the OMP sessions in your Tern windows on SidePulse: working, waiting, done, failed.",
+ "url": "https://alphastorm.github.io/tern-sidepulse/",
+ "codeRepository": "https://github.com/alphastorm/tern-sidepulse",
+ "license": "https://github.com/alphastorm/tern-sidepulse/blob/main/LICENSE"}
+</script>
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="logo.svg" alt="" width="24" height="24">tern-sidepulse</a>
+    <nav aria-label="Site">
+      <a href="./" aria-current="page">Overview</a>
+      <a href="#what-you-see">What you see</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#install">Install</a>
+      <a class="ext" href="https://github.com/alphastorm/tern-sidepulse/blob/main/docs/compatibility.md">Compatibility</a>
+      <a class="ext" href="https://github.com/alphastorm/tern-sidepulse">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main>
+
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <p class="eyebrow">Tern window plugin · <span class="nowrap"><span class="kin" aria-hidden="true"></span> Oh My Pi sessions</span></p>
+      <h1><span class="line">Your OMP sessions in Tern.</span> <span class="line accent">On SidePulse.</span></h1>
+      <p class="lede">Keep running Oh My Pi inside Tern. tern-sidepulse watches the OMP panes in your open Tern windows, local and remote, and sends one status to SidePulse — working, waiting for input, completed, failed, or idle — so the LEDs and the menu bar tell you when a session needs you. The plugin never reads a transcript, submits a prompt, approves an action, or changes a window layout.</p>
+      <div class="actions">
+        <a class="cta" href="#install">Get started</a>
+        <a class="cta secondary" href="https://github.com/alphastorm/tern-sidepulse/releases/latest">Latest release</a>
+      </div>
+      <ul class="facts" aria-label="Requirements">
+        <li class="label" aria-hidden="true">Requires</li>
+        <li>Tern 0.9.12+</li>
+        <li>SidePulse agent monitor on the same Mac</li>
+        <li>Python 3.10+</li>
+        <li>macOS</li>
+      </ul>
+    </div>
+    <figure class="demo">
+      <div class="frame"><video src="demo.mp4" poster="demo-poster.png" width="1920" height="1080" muted loop playsinline preload="metadata" aria-label="Synthetic illustration: a stylized Tern window with two OMP panes and SidePulse's eight-LED strip changing from working to waiting for input, completed, then idle"></video></div>
+      <figcaption>Synthetic illustration rendered from <code>assets/demo.html</code> — not a capture of Tern, OMP, or SidePulse, and not LED evidence. Durations are compressed. <a href="https://github.com/alphastorm/tern-sidepulse/blob/main/docs/media/README.md">Provenance</a></figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="what-you-see">
+  <div class="wrap">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">What you see</p>
+        <h2>One status, the most actionable one.</h2>
+      </div>
+      <p>The OMP sessions visible in your open Tern windows combine into one session on SidePulse, including sessions on attached remote hosts. The strips show SidePulse's default LED programs; your configured animations apply.</p>
+    </div>
+    <ul class="states" aria-label="OMP conditions and SidePulse statuses">
+      <li>
+        <div class="state-visual">
+          <div class="edge" aria-hidden="true"><div class="leds" data-prog="cyan-roll"><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span></div></div>
+          <span class="program">Cyan Roll</span>
+        </div>
+        <span class="status"><code>working</code></span>
+        <p class="condition">Any session working <span class="note">(your configured working animation)</span></p>
+      </li>
+      <li>
+        <div class="state-visual">
+          <div class="edge" aria-hidden="true"><div class="leds" data-prog="amber-pulse"><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span></div></div>
+          <span class="program">Amber Pulse</span>
+        </div>
+        <span class="status"><code>waiting_for_input</code></span>
+        <p class="condition">Any session waiting for input (an <code>ask</code>, an approval) <span class="note">outranks <code>working</code></span></p>
+      </li>
+      <li>
+        <div class="state-visual">
+          <div class="edge" aria-hidden="true"><div class="leds" data-prog="solid-green"><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span></div></div>
+          <span class="program">Solid Green</span>
+        </div>
+        <span class="status"><code>completed</code></span>
+        <p class="condition">A turn finished <span class="note">for 15 s, unless the session resumes first</span></p>
+      </li>
+      <li>
+        <div class="state-visual">
+          <div class="edge" aria-hidden="true"><div class="leds" data-prog="amber-pulse"><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span></div></div>
+          <span class="program">Amber Pulse</span>
+        </div>
+        <span class="status"><code>blocked_error</code></span>
+        <p class="condition">A turn failed <span class="note">for 30 s, unless the session resumes first</span></p>
+      </li>
+      <li>
+        <div class="state-visual">
+          <div class="edge" aria-hidden="true"><div class="leds" data-prog="idle-pulse"><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span><span class="led"></span></div></div>
+          <span class="program">Idle Pulse</span>
+        </div>
+        <span class="status"><code>idle_ready</code></span>
+        <p class="condition">Nothing visible, or all idle <span class="note">(clears this plugin's status)</span></p>
+      </li>
+    </ul>
+
+    <p class="small measure">Closing a pane, losing a host connection, disabling the plugin, or closing the last window clears the status within about 20 s. Multiple Tern windows combine into one session on SidePulse: duplicates across windows are reduced, never counted.</p>
+  </div>
+</section>
+
+<section id="how-it-works">
+  <div class="wrap">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">How it works</p>
+        <h2>From window state to one status.</h2>
+      </div>
+      <p>Each window sends a complete snapshot. One local coordinator combines the windows and delivers the result to both SidePulse receivers.</p>
+    </div>
+    <ol class="pipeline">
+      <li>
+        <span class="node"><code>window.luau</code></span>
+        <span class="where">each Tern window</span>
+        <p>Observes <code>cx.agents:list()</code> every 5 s and on agent events. Keeps OMP panes on connected hosts whose surface role is <code>omp.session</code>; sends a complete snapshot.</p>
+      </li>
+      <li>
+        <span class="node"><code>bridge.py</code></span>
+        <span class="where">helper, per call</span>
+        <p><code>python3 -I -S</code>, an argument vector, a 4 s timeout, and bytecode under the plugin data directory.</p>
+      </li>
+      <li>
+        <span class="node">coordinator</span>
+        <span class="where">one per user</span>
+        <p>Singleton lock, 15 s leases, and priority failed › waiting › working › finished › idle. Bounded retry; clears and exits 5 s after the last lease ends (60 s cap if SidePulse is unreachable).</p>
+      </li>
+      <li>
+        <span class="node"><code>events.sock</code></span>
+        <span class="where">SidePulse menu-bar app</span>
+        <p>Receives the combined status through a private local socket.</p>
+      </li>
+      <li class="handoff">
+        <span class="node"><code>relay-events.sock</code></span>
+        <span class="where">SidePulse headless service</span>
+        <p>Receives the same status independently of the menu-bar app.</p>
+      </li>
+    </ol>
+    <p class="small section-note">Full detail: <a href="https://github.com/alphastorm/tern-sidepulse#how-it-works">How it works</a> · <a href="https://github.com/alphastorm/tern-sidepulse/blob/main/docs/compatibility.md">compatibility and the SidePulse wire contract</a>.</p>
+  </div>
+</section>
+
+<section id="private-by-design">
+  <div class="wrap">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Private by design</p>
+        <h2>Six fields in, one status out.</h2>
+      </div>
+      <p>The plugin never reads pane titles, working directories, model names, prompts, assistant text, tool arguments, or transcript paths.</p>
+    </div>
+    <ul class="grid three">
+      <li><h3>Reads six fields, never transcripts</h3><p><code>pane</code>, <code>state</code>, <code>kind</code>, <code>program</code>, <code>host</code>, <code>alive</code> from each agent row. Host membership and each pane's <code>surface.role</code> identify connected OMP panes. <a href="https://github.com/alphastorm/tern-sidepulse/blob/main/tests/test_privacy.py"><code>tests/test_privacy.py</code></a> pins what is read.</p></li>
+      <li><h3>Nothing listens on the network</h3><p>The helper, coordinator, and SidePulse receivers communicate through private local sockets. Live observations stay in memory only; a restart never replays a stale prompt.</p></li>
+      <li><h3>Private local files and sockets</h3><p><code>~/.local/state/tern-sidepulse</code> has mode <code>0700</code>; ownership is checked and symlinks are refused. Runtime and state files are written with mode <code>0600</code>.</p></li>
+      <li><h3>Bounded requests and state</h3><p>Requests are capped at 256 KiB, with at most 32 concurrent connections. State is capped at 64 windows and 512 panes per window.</p></li>
+      <li><h3>Isolated helper execution</h3><p>Argument vectors, never a shell; <code class="nowrap">-I -S</code> isolation and a 4 s timeout. Failed calls back off at <code>500 · 2ⁿ</code> ms, capped at 30 s.</p></li>
+      <li><h3>Remote hosts need nothing installed</h3><p>No SidePulse, no helper, and no service on a remote host. OMP sessions are observed through the open Tern window connected to that host.</p></li>
+    </ul>
+    <p class="small section-note">Read the <a href="https://github.com/alphastorm/tern-sidepulse#privacy-and-hardening">privacy and hardening details</a> · <a href="https://github.com/alphastorm/tern-sidepulse/blob/main/SECURITY.md">security policy</a>.</p>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">One-time setup</p>
+        <h2>Install once, then plain <code>omp</code>.</h2>
+      </div>
+      <p>Install a copy or link a checkout. The next window snapshot picks up existing OMP sessions; nothing needs restarting.</p>
+    </div>
+    <div class="setup-wrap">
+      <aside class="setup-aside" aria-label="Requirements and guides">
+        <h3>You need</h3>
+        <ul>
+          <li><span class="k">Tern</span><span class="v">Tern 0.9.12 or later on macOS</span></li>
+          <li><span class="k">SidePulse</span><span class="v">SidePulse's agent monitor on the same Mac: the menu-bar app, the headless service, or both</span></li>
+          <li><span class="k">Python</span><span class="v">Python 3.10+ at a known absolute path — Homebrew, a versioned interpreter, python.org, or Command Line Tools. Nothing is installed with <code>pip</code>.</span></li>
+          <li><span class="k">Remote hosts</span><span class="v">Nothing to install</span></li>
+        </ul>
+        <h3>Guides</h3>
+        <ul>
+          <li><a href="https://github.com/alphastorm/tern-sidepulse#install">Install</a></li>
+          <li><a href="https://github.com/alphastorm/tern-sidepulse#confirm-it-works">Confirm it works</a></li>
+          <li><a href="https://github.com/alphastorm/tern-sidepulse#commands">Commands</a></li>
+          <li><a href="https://github.com/alphastorm/tern-sidepulse#configuration">Configuration</a></li>
+          <li><a href="https://github.com/alphastorm/tern-sidepulse#uninstall">Uninstall</a></li>
+        </ul>
+      </aside>
+      <ol class="setup">
+        <li>
+          <h3>Install</h3>
+          <p>Install a copy from the default branch:</p>
+          <div class="snippet"><pre><code>tern plugin install github.com/alphastorm/tern-sidepulse</code></pre></div>
+          <p>Or link a checkout for development (saving any file in the checkout reloads the plugin):</p>
+          <div class="snippet"><pre><code>tern plugin link /absolute/path/to/tern-sidepulse
+tern plugin reload tern-sidepulse</code></pre></div>
+          <p>To pin a release, check out its tag and run <code>tern plugin install /path/to/checkout</code>. To update an installed copy, run <code>tern plugin install --force github.com/alphastorm/tern-sidepulse</code>; for a linked checkout, run <code>git pull</code>.</p>
+        </li>
+        <li>
+          <h3>Confirm it works</h3>
+          <p>Wait about 5 s after installing or linking. Open the Tern command palette and run <code>tern-sidepulse: doctor</code>. Expect a toast starting with <code>ok:</code> (<code>ok: 0 issue(s); socket delivery is not an LED check</code>). A toast starting with <code>warn:</code> names a check that needs attention.</p>
+        </li>
+        <li>
+          <h3>Watch SidePulse</h3>
+          <p>Check SidePulse's menu-bar app, or <code>~/.local/state/sidepulse/agent-monitor/latest.json</code> when running headless. While an OMP session works or waits, one session from origin <code>Tern</code> (<code>OMP in Tern</code>) appears.</p>
+        </li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section id="compatibility">
+  <div class="wrap">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Exercised</p>
+        <h2>Exact versions, not “latest”.</h2>
+      </div>
+      <p>The compatibility record names the exact versions and observations. Untested lifecycle cases stay explicit.</p>
+    </div>
+    <ul class="evidence">
+      <li><span class="k">Exercised</span><span class="v">Tern 0.9.12 (<code>e498b49</code>) · OMP 18.16.0</span><span class="s">SidePulse revision <code>ffb1d3c2</code> (<code>0.2.4.dev6+gffb1d3c2f</code>), macOS 27.2 on Apple Silicon, and a remote Mac Studio over Tern remoting.</span></li>
+      <li><span class="k">Automated</span><span class="v">Unit and integration suite on Python 3.10 and 3.13 in CI</span><span class="s">Plus <code>luau-lsp</code> analysis of <code>window.luau</code>.</span></li>
+      <li><span class="k">Not yet exercised</span><span class="v">Sleep/wake, a full Tern quit and relaunch</span><span class="s">Remote disconnect/reconnect and the two-window close-one case.</span></li>
+    </ul>
+    <p class="small section-note">Timings come from socket and state-file records; a socket write is not an LED check. Read the <a href="https://github.com/alphastorm/tern-sidepulse/blob/main/docs/compatibility.md">compatibility and contract probe</a>.</p>
+  </div>
+</section>
+
+<section id="alternatives">
+  <div class="wrap">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">A narrow job</p>
+        <h2>Use something else when you want more than a status.</h2>
+      </div>
+      <p>This plugin reports one combined status from the OMP sessions in your open Tern windows. It is not a remote client or an always-on remote monitor.</p>
+    </div>
+    <ul class="alts">
+      <li><span class="want">Open or answer an OMP session from your phone</span><span class="use"><a href="https://github.com/carrythroughsystems/omp-session-gateway">OMP Session Gateway</a></span></li>
+      <li><span class="want">Each pane as its own SidePulse session</span><span class="use">Not in this release — one combined session.</span></li>
+      <li><span class="want">Status for remote hosts with no Tern window open</span><span class="use">Not this — remote hosts follow open windows.</span></li>
+      <li><span class="want">Tern outside macOS</span><span class="use">Not supported.</span></li>
+    </ul>
+  </div>
+</section>
+
+</main>
+<footer>
+  <div class="wrap">
+    <a class="brand" href="./"><img src="logo.svg" alt="" width="20" height="20">tern-sidepulse</a>
+    <ul class="links">
+      <li><a href="https://github.com/alphastorm/tern-sidepulse">Repository</a></li>
+      <li><a href="https://github.com/alphastorm/tern-sidepulse/blob/main/README.md">README</a></li>
+      <li><a href="https://github.com/alphastorm/tern-sidepulse/blob/main/docs/compatibility.md">Compatibility</a></li>
+      <li><a href="https://github.com/alphastorm/tern-sidepulse/blob/main/CHANGELOG.md">Changelog</a></li>
+      <li><a href="https://github.com/alphastorm/tern-sidepulse/blob/main/SECURITY.md">Security policy</a></li>
+      <li><a href="https://github.com/alphastorm/tern-sidepulse/blob/main/LICENSE">MIT license</a></li>
+    </ul>
+    <div class="family-wrap">
+      <span class="family-label">The OMP family</span>
+      <ul class="family">
+        <li><a href="https://carrythroughsystems.github.io/omp-session-gateway/">OMP Session Gateway</a></li>
+        <li><a href="https://alphastorm.github.io/omp-ninfer/">OMP NInfer</a></li>
+        <li><a href="https://alphastorm.github.io/omp-oracle/">OMP Oracle</a></li>
+        <li><a href="https://alphastorm.github.io/omp-strata/">OMP Strata</a></li>
+      </ul>
+    </div>
+    <p>Community project; not affiliated with or endorsed by the Oh My Pi, Tern, or SidePulse maintainers. No telemetry, analytics, or hosted control plane.</p>
+  </div>
+</footer>
+<script>
+const video = document.querySelector(".demo video");
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  video.controls = true;
+} else {
+  video.play().catch(() => { video.controls = true; });
+}
+</script>
+<script>
+// Progressive enhancement: a Copy button per setup snippet. Comments are stripped from the
+// copied text so the clipboard holds runnable commands. No network, storage, or analytics.
+if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+  for (const snippet of document.querySelectorAll(".snippet")) {
+    const code = snippet.querySelector("code");
+    if (!code) continue;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "copy-button";
+    button.textContent = "Copy";
+    button.setAttribute("aria-label", "Copy commands");
+    let timer = 0;
+    button.addEventListener("click", async () => {
+      const text = Array.from(code.childNodes, (node) => node.nodeType === Node.ELEMENT_NODE && node.classList.contains("c") ? "" : node.textContent)
+        .join("").split("\n").map((line) => line.replace(/\s+$/u, "")).filter((line) => line !== "").join("\n");
+      try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = "Copied";
+        button.setAttribute("data-done", "");
+      } catch {
+        button.textContent = "Select and copy";
+        button.removeAttribute("data-done");
+      }
+      clearTimeout(timer);
+      timer = setTimeout(() => { button.textContent = "Copy"; button.removeAttribute("data-done"); }, 1600);
+    });
+    const bar = document.createElement("div");
+    bar.className = "snippet-bar";
+    const lang = document.createElement("span");
+    lang.className = "lang";
+    lang.textContent = "sh";
+    bar.append(lang, button);
+    snippet.prepend(bar);
+  }
+}
+</script>
+</body>
+</html>

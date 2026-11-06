@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 prompt-exports/
 .DS_Store
+/site/logo.svg
+/site/favicon.svg
+/site/og.png
+/site/demo.mp4
+/site/demo-poster.png
