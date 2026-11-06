@@ -1,0 +1,118 @@
+{
+  "1_three_sessions": [
+    {
+      "menu": "Context and Task Briefs  V0211",
+      "mode": "waiting_for_input",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "04ab2030"
+    },
+    {
+      "menu": "Review docs  DOCS",
+      "mode": "working",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "6d376615"
+    },
+    {
+      "menu": "api work",
+      "mode": "idle_ready",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "ecae14e0"
+    }
+  ],
+  "1_latency_s": 0.0,
+  "2_label_change": [
+    {
+      "menu": "Context and Task Briefs  V0211",
+      "mode": "waiting_for_input",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "04ab2030"
+    },
+    {
+      "menu": "Docs reviewed  DOCS",
+      "mode": "working",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "6d376615"
+    },
+    {
+      "menu": "api work",
+      "mode": "idle_ready",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "ecae14e0"
+    }
+  ],
+  "3_after_sigkill_rows": [
+    {
+      "menu": "Context and Task Briefs  V0211",
+      "mode": "waiting_for_input",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "04ab2030"
+    },
+    {
+      "menu": "Docs reviewed  DOCS",
+      "mode": "working",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "6d376615"
+    },
+    {
+      "menu": "api work",
+      "mode": "idle_ready",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "ecae14e0"
+    }
+  ],
+  "3_ledger_scopes": 3,
+  "4_after_respawn": [
+    {
+      "menu": "Docs reviewed  DOCS",
+      "mode": "working",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "6d376615"
+    }
+  ],
+  "4_latency_s": 0.0,
+  "4_new_pid_differs": true,
+  "5_rows_right_after_restart": 0,
+  "5_after_restart": [
+    {
+      "menu": "Docs reviewed  DOCS",
+      "mode": "working",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "6d376615"
+    }
+  ],
+  "5_recovery_s": 0.73,
+  "6_disable_summary": "no rows",
+  "6_after_disable": [],
+  "7_after_enable": [
+    {
+      "menu": "api work",
+      "mode": "idle_ready",
+      "origin": "Tern",
+      "provider": "omp",
+      "session": "ecae14e0"
+    }
+  ],
+  "8_after_lease_expiry": [],
+  "8_clear_s": 3.03,
+  "8_coordinator_exited": true,
+  "log_tail": [
+    "2026-11-06T04:18:45.438Z [73712] coordinator listening on /tmp/tsp72e-fvton_ho/rt/coordinator.sock epoch fc88cb26995325b1",
+    "2026-11-06T04:18:47.123Z [73721] coordinator listening on /tmp/tsp72e-fvton_ho/rt/coordinator.sock epoch dbd3be996d9ed288",
+    "2026-11-06T04:18:48.173Z [73721] program_status: receiver replaced, resubmitting every row",
+    "2026-11-06T04:18:48.288Z [73721] disabled: observers revoked, neutral requested",
+    "2026-11-06T04:18:48.324Z [73721] enabled: fresh registrations accepted",
+    "2026-11-06T04:18:51.389Z [73721] observer 73708:: generation 2 lease expired",
+    "2026-11-06T04:18:52.394Z [73721] coordinator exiting (drained)"
+  ]
+}

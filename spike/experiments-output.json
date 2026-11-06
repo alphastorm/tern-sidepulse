@@ -1,0 +1,150 @@
+{
+  "E1": {
+    "acks": [
+      {
+        "ok": true,
+        "seq": 1,
+        "revision": 1
+      },
+      {
+        "ok": true,
+        "seq": 1,
+        "revision": 2
+      },
+      {
+        "ok": true,
+        "seq": 1,
+        "revision": 3
+      },
+      {
+        "ok": true,
+        "seq": 2,
+        "revision": 4
+      }
+    ],
+    "rows_before": 3,
+    "rows_after_clear": 2
+  },
+  "E2": {
+    "visible_after_2_days": [
+      "blocked_error",
+      "idle_ready",
+      "waiting_for_input",
+      "working"
+    ],
+    "aggregate_mode": "blocked_error",
+    "active_count": 3
+  },
+  "E3": {
+    "acks_before": [
+      {
+        "ok": true,
+        "seq": 1,
+        "revision": 1
+      },
+      {
+        "ok": true,
+        "seq": 1,
+        "revision": 2
+      }
+    ],
+    "rows_before": 2,
+    "rows_after_restart": 0,
+    "inode_changed": true,
+    "ack_after_restart": {
+      "ok": true,
+      "seq": 1,
+      "revision": 1
+    }
+  },
+  "E4": {
+    "prompt": "First title (feedface)",
+    "session": "Renamed tab (feedface)"
+  },
+  "E5": {
+    "colon_title_session_id": {
+      "display_name": "DOCS: Review docs (01234567)",
+      "menu": "Review docs  DOCS",
+      "parts": [
+        "Review docs",
+        "DOCS"
+      ],
+      "session_id": "0123456789abcdef"
+    },
+    "plain_title_session_id": {
+      "display_name": "api work (11234567)",
+      "menu": "api work",
+      "parts": [
+        "api work",
+        null
+      ],
+      "session_id": "1123456789abcdef"
+    },
+    "colon_title_no_ids": {
+      "display_name": "DOCS: Review docs ()",
+      "menu": "Review docs ()  DOCS",
+      "parts": [
+        "Review docs ()",
+        "DOCS"
+      ],
+      "session_id": "program:73b549f1c5d1836136c2d3b7730b4c7fe5962f81d3a37b3a9b6830ae44cf3319"
+    },
+    "colon_title_cwd": {
+      "display_name": "tern-sidepulse-spike: DOCS: Review docs (31234567)",
+      "menu": "DOCS: Review docs  tern-sidepulse-spike",
+      "parts": [
+        "DOCS: Review docs",
+        "tern-sidepulse-spike"
+      ],
+      "session_id": "3123456789abcdef"
+    },
+    "no_label": {
+      "display_name": "tern-e",
+      "menu": "tern-e",
+      "parts": [
+        "tern-e",
+        null
+      ],
+      "session_id": "4123456789abcdef"
+    }
+  },
+  "E6": {
+    "ours_present": false,
+    "rows": 64
+  },
+  "E7": {
+    "status_title_196_bytes": "rejected: title exceeds its limit or contains control characters",
+    "status_title_cut_192_context_title_196": "accepted"
+  },
+  "E9": {
+    "events_for_two_reports": 1,
+    "bridge_update": {
+      "v": 1,
+      "type": "program_status",
+      "publisher": "00000000-0000-4000-8000-0000000000aa",
+      "scope": "tern-f",
+      "seq": 1793938724971451,
+      "updated_at": 1793938724971,
+      "status": {
+        "state": "idle",
+        "title": "DOCS: Review docs"
+      },
+      "context": {
+        "provider": "omp",
+        "session_id": "0123456789abcdef"
+      }
+    },
+    "phone_update": {
+      "v": 1,
+      "type": "program_status",
+      "publisher": "00000000-0000-4000-8000-0000000000aa",
+      "scope": "tern-f",
+      "seq": 1793938724971451,
+      "updated_at": 1793938724971,
+      "status": {
+        "state": "idle",
+        "title": "DOCS: Review docs"
+      }
+    }
+  }
+}

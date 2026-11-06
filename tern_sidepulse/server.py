@@ -224,7 +224,9 @@ def run_coordinator(
         identity = load_identity(data_dir, create=True)
         assert identity is not None
         clock = Clock()
-        transport = SidePulseTransport.for_receivers(session_id_for(identity), clock, ui_sockets, service_sockets, log=log)
+        transport = _spike_program_transport(runtime, data_dir, identity, clock, log) or SidePulseTransport.for_receivers(
+            session_id_for(identity), clock, ui_sockets, service_sockets, log=log
+        )
         coordinator = Coordinator(
             clock=clock,
             transport=transport,
@@ -242,3 +244,31 @@ def run_coordinator(
         raise
     finally:
         log.close()
+
+
+def _spike_program_transport(runtime: Path, data_dir: Path, identity: dict, clock, log):
+    """SPIKE ONLY: ``"transport": "program_status"`` in config.json (or TERN_SIDEPULSE_TRANSPORT) selects the #72 adapter."""
+    from .paths import sidepulse_state_dirs
+    from .storage import load_config, session_id_for
+
+    config = load_config(data_dir)
+    if os.environ.get("TERN_SIDEPULSE_TRANSPORT", config.get("transport")) != "program_status":
+        return None
+    from .program_transport import ProgramStatusTransport, program_socket_for_dir
+
+    env = os.environ.get("TERN_SIDEPULSE_PROGRAM_SOCKETS")
+    configured = config.get("program_sockets")
+    if env:
+        sockets = tuple(Path(p) for p in env.split(os.pathsep) if p)
+    elif isinstance(configured, list) and configured and all(isinstance(p, str) for p in configured):
+        sockets = tuple(Path(p).expanduser() for p in configured)
+    else:
+        sockets = tuple(program_socket_for_dir(d) for d in sidepulse_state_dirs())
+    return ProgramStatusTransport(
+        session_id=session_id_for(identity),
+        salt=identity["install_id"],
+        clock=clock,
+        candidates=sockets,
+        ledger_path=runtime / "program-scopes.json",
+        log=log,
+    )
