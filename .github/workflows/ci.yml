@@ -21,9 +21,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
       - name: Fetch luau-lsp 1.70.1
         run: |
           curl -sSL -o luau-lsp.zip https://github.com/JohnnyMorganz/luau-lsp/releases/download/1.70.1/luau-lsp-linux-x86_64.zip
           unzip -q luau-lsp.zip
           chmod +x luau-lsp
+      - name: Fetch Luau 0.745
+        run: |
+          mkdir -p luau-bin
+          curl -fsSL -o luau.zip https://github.com/luau-lang/luau/releases/download/0.745/luau-ubuntu.zip
+          unzip -q luau.zip -d luau-bin
+          chmod +x luau-bin/luau
       - run: ./luau-lsp analyze --definitions=types/tern.d.luau window.luau
+      - run: python -m unittest tests.test_luau_harness -v
+        env:
+          LUAU: ${{ github.workspace }}/luau-bin/luau
+          TERN_SIDEPULSE_REQUIRE_LUAU: "1"

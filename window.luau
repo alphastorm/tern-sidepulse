@@ -2,10 +2,12 @@
 -- tern-sidepulse window observer.
 --
 -- Every Tern window runs one copy. It enumerates the OMP sessions the window can see, projects
--- them to a small status snapshot (pane id, state, outcome notice) and hands it to the Python
--- helper, which forwards it to the one local coordinator that talks to SidePulse. It never
--- submits prompts, approves anything, reads transcripts or changes layouts; it keeps only plain
--- data between callbacks, never a `cx`, a row or a timer handle.
+-- them to a small status snapshot (host, pane id, state, outcome notice, optional label) and hands
+-- it to the Python helper, which forwards it to the one local coordinator that talks to SidePulse.
+-- From agent rows it reads only pane, state, kind, program, host and alive. Labels come only from
+-- pane titles and user-given tab names, never cwd, model or messages. No title-event subscription:
+-- labels refresh within one 5 s pass. It never submits prompts, approves anything, reads transcripts
+-- or changes layouts; it keeps only plain data between callbacks, never a `cx`, a row or timer handle.
 
 local VERSION = "0.1.0"
 local DATA = tern.plugin.data
@@ -14,6 +16,9 @@ local COALESCE_MS = 75
 local RECON_MS = 5000
 local HELPER_TIMEOUT_MS = 4000
 local MAX_OBSERVATIONS = 512
+local MAX_LABEL_BYTES = 256
+local MAX_HOST_KEY_BYTES = 128
+local MAX_SNAPSHOT_BYTES = 192 * 1024
 local MAX_BACKOFF_MS = 30000
 local SURFACE_OPTS = { nodes = 1, depth = 1 } -- the cheapest documented header query; never max_chars alone
 
@@ -66,7 +71,7 @@ local S = {
 	notices = {} :: { [number]: { id: string, kind: string, at: number } },
 	notice_seq = 0,
 	diag = {} :: { [string]: number }, -- classification counts of the latest enumeration pass
-	stats = {} :: { [string]: number }, -- cumulative for this VM: budget_pauses, helper_failures
+	stats = {} :: { [string]: number }, -- cumulative for this VM: budget_pauses, helper_failures, encode_failed
 }
 
 local function now_ms(): number
@@ -169,8 +174,85 @@ local function str(value: any): string?
 	return nil
 end
 
+local function cut_utf8(text: string, max_bytes: number): string
+	if #text <= max_bytes then
+		return text
+	end
+	local cut = max_bytes + 1
+	local byte = text:byte(cut)
+	while byte ~= nil and byte >= 0x80 and byte <= 0xBF do
+		cut -= 1
+		byte = text:byte(cut)
+	end
+	return text:sub(1, cut - 1)
+end
+
+local function key_ok(key: string?): boolean
+	return key ~= nil
+		and #key > 0
+		and #key <= MAX_HOST_KEY_BYTES
+		and utf8.len(key) ~= nil
+		and key:find("%c") == nil
+		and key:find("\194[\128-\159]") == nil
+end
+
+local function host_key(host: any, id: number): string
+	if host.kind == "local" then
+		return "local"
+	end
+	local address = str(host.address)
+	if key_ok(address) then
+		return address :: string
+	end
+	local name = str(host.name)
+	if key_ok(name) then
+		return name :: string
+	end
+	count("host_fallback")
+	return "id:" .. tostring(id)
+end
+
+local function read_labels(cx: WindowCx): { [number]: { text: string, from_tab: boolean } }?
+	local ok_panes, panes = pcall(function()
+		return cx.session:panes()
+	end)
+	if not ok_panes or type(panes) ~= "table" then
+		count("labels_unavailable")
+		return nil
+	end
+	local ok_tabs, tabs = pcall(function()
+		return cx.session:tabs()
+	end)
+	local tab_names: { [string]: string } = {}
+	if ok_tabs and type(tabs) == "table" then
+		for _, tab in ipairs(tabs :: { any }) do
+			local name = str(tab.name)
+			if name ~= nil and name:find("%S") then
+				tab_names[tostring(tab.id)] = name
+			end
+		end
+	else
+		count("labels_unavailable")
+	end
+	local labels = {}
+	for _, info in ipairs(panes :: { any }) do
+		local pane = num(info.pane)
+		if pane ~= nil then
+			local name = if info.tab ~= nil then tab_names[tostring(info.tab)] else nil
+			local title = str(info.title)
+			if name ~= nil then
+				labels[pane] = { text = name, from_tab = true }
+			elseif title ~= nil and title:find("%S") then
+				labels[pane] = { text = title, from_tab = false }
+			end
+		end
+	end
+	return labels
+end
+
 -- Returns coverage ("complete" | "unknown") and the observation list. Reads only pane, state,
--- kind, program, host and alive from each row; titles, cwd, model and messages are never touched.
+-- kind, program, host and alive from agent rows; labels use only pane titles and user-given tab
+-- names, never TabInfo.title, cwd, model or messages. Labels refresh on the 5 s pass, not title events.
 local function enumerate(cx: WindowCx): (string, { any })
 	S.diag = {}
 	local ok_agents, agents = pcall(function()
@@ -184,6 +266,7 @@ local function enumerate(cx: WindowCx): (string, { any })
 	end
 
 	local host_state: { [number]: string } = {}
+	local host_keys: { [number]: string } = {}
 	local pane_host: { [number]: number } = {}
 	local only_host: number? = nil
 	local host_count = 0
@@ -192,6 +275,7 @@ local function enumerate(cx: WindowCx): (string, { any })
 		if id ~= nil then
 			host_count += 1
 			host_state[id] = str(host.state) or "unknown"
+			host_keys[id] = host_key(host, id)
 			if type(host.panes) == "table" then
 				for _, pane in ipairs(host.panes) do
 					local pid = num(pane)
@@ -277,7 +361,7 @@ local function enumerate(cx: WindowCx): (string, { any })
 								sent_notice = { id = notice.id, kind = notice.kind }
 							end
 						end
-						table.insert(observations, { pane = pane, state = state, notice = sent_notice })
+						table.insert(observations, { pane = pane, state = state, notice = sent_notice, host = host_keys[host] })
 					end
 				end
 			end
@@ -296,6 +380,18 @@ local function enumerate(cx: WindowCx): (string, { any })
 	if #observations > MAX_OBSERVATIONS then
 		count("too_many")
 		return "unknown", tern.json.array({})
+	end
+	if #observations > 0 then
+		local labels = read_labels(cx)
+		for _, observation in ipairs(observations) do
+			local entry = if labels ~= nil then labels[observation.pane] else nil
+			if entry ~= nil then
+				observation.label = cut_utf8(entry.text, MAX_LABEL_BYTES)
+				count(if entry.from_tab then "label_tab" else "label_title")
+			else
+				count("label_none")
+			end
+		end
 	end
 	return "complete", tern.json.array(observations)
 end
@@ -318,7 +414,7 @@ local function parse_result(result: ProcessResult): (any, string?)
 	return decoded, nil
 end
 
-local function run_helper(op: string, payload: any, cb: (any, string?, WindowCx?) -> ()): boolean
+local function run_helper_text(op: string, stdin_text: string, cb: (any, string?, WindowCx?) -> ()): boolean
 	if S.python == nil then
 		resolve_python()
 	end
@@ -330,7 +426,7 @@ local function run_helper(op: string, payload: any, cb: (any, string?, WindowCx?
 	-- the data directory (the plugin directory is watched for reloads).
 	local python = S.python
 	local argv = { python, "-I", "-S", "-X", "pycache_prefix=" .. DATA .. "/pycache", BRIDGE, op, "--data-dir", DATA }
-	local opts = { stdin = tern.json.encode(payload), timeout_ms = HELPER_TIMEOUT_MS }
+	local opts = { stdin = stdin_text, timeout_ms = HELPER_TIMEOUT_MS }
 	local ok, _err = pcall(tern.process.run, argv, opts, function(result: ProcessResult, cx: WindowCx?)
 		local decoded, code = parse_result(result)
 		local too_old = result.status == 3 or (type(decoded) == "table" and decoded.error == "python_too_old")
@@ -351,6 +447,38 @@ local function run_helper(op: string, payload: any, cb: (any, string?, WindowCx?
 		return false
 	end
 	return true
+end
+
+local function run_helper(op: string, payload: any, cb: (any, string?, WindowCx?) -> ()): boolean
+	local ok, text = pcall(tern.json.encode, payload)
+	if not ok then
+		cb(nil, "encode_failed", nil)
+		return false
+	end
+	return run_helper_text(op, text, cb)
+end
+
+local function encode_snapshot(payload: any): string?
+	local ok, text = pcall(tern.json.encode, payload)
+	if ok and #text <= MAX_SNAPSHOT_BYTES then
+		return text
+	end
+	local dropped = false
+	for _, observation in ipairs(payload.observations) do
+		if observation.label ~= nil then
+			observation.label = nil
+			dropped = true
+		end
+	end
+	if dropped then
+		count("labels_dropped")
+		payload.diag = diag_report()
+		ok, text = pcall(tern.json.encode, payload)
+		if ok and #text <= MAX_SNAPSHOT_BYTES then
+			return text
+		end
+	end
+	return nil
 end
 
 -- ---- pump: one call in flight, one newest snapshot ---------------------------------------
@@ -457,8 +585,14 @@ local function start_snapshot(cx: WindowCx)
 		observations = observations,
 		diag = diag_report(),
 	}
+	local text = encode_snapshot(payload)
+	if text == nil then
+		backoff("encode_failed", nil)
+		tally("encode_failed")
+		return
+	end
 	S.in_flight = true
-	run_helper("snapshot", payload, on_snapshot)
+	run_helper_text("snapshot", text, on_snapshot)
 end
 
 pump = function(cx: WindowCx)
@@ -575,7 +709,7 @@ local function toast_result(cx: WindowCx?, title: string, body: any, code: strin
 	if body == nil then
 		toast(cx, "error", title, code or "helper failed")
 	elseif body.ok == true then
-		toast(cx, "success", title, str(body.desired) or str(body.summary) or "ok")
+		toast(cx, "success", title, str(body.summary) or "ok")
 	else
 		toast(cx, "error", title, str(body.error) or "error")
 	end
