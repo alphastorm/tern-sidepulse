@@ -118,16 +118,19 @@ nothing under them is read by the plugin, the helper, or the tests that exercise
 | `assets/banner.png` | rendered banner @2x (2560×640) |
 | `assets/og.html` | social preview source (1280×640) |
 | `assets/og.png` | GitHub social preview and site `og:image` (1280×640) |
-| `assets/demo.html` | synthetic demo source: a stylized Tern window and SidePulse's status, seekable by `?t=<seconds>` |
-| `docs/media/tern-sidepulse-demo.gif`, `.mp4`, `-poster.png` | rendered demo loop for the README and the site, with provenance in `docs/media/README.md` |
-| `docs/media/state-*.png` | one still per status for the site's "What you see" row |
-| `site/` | public site (`alphastorm.github.io/tern-sidepulse`). `.github/workflows/pages.yml` stages `logo.svg`, `favicon.svg`, `og.png` and the demo media from `assets/` and `docs/media/` at deploy time, so `site/` never carries copies |
+| `assets/demo.html` | synthetic demo source: a stylized Tern window and SidePulse's status, seekable by `?t=<seconds>`; `?probe=fonts` reports whether the webfonts loaded |
+| `docs/media/tern-sidepulse-demo.gif`, `.mp4`, `-poster.png` | rendered demo loop for the README (GIF) and the site (MP4 with poster), with provenance in `docs/media/README.md` |
+| `docs/media/manifest.json` | digest of the demo sources plus the SHA-256, size and dimensions of each rendered output; CI compares it against the files so a stale render fails without Chrome or ffmpeg |
+| `site/` | public site (`alphastorm.github.io/tern-sidepulse`): the site's "What you see" strips are live CSS renderings of SidePulse's default programs, not images. `.github/workflows/pages.yml` stages `logo.svg`, `favicon.svg`, `og.png`, `demo.mp4` and `demo-poster.png` from `assets/` and `docs/media/` at deploy time, so `site/` never carries copies |
 
 `tests/test_site.py` (host-free, part of the normal `unittest` discovery and CI) fails when a site page
-references an asset the deployment would not serve, when a staged copy is not ignored by Git, when
-`og:image:width`/`og:image:height` disagree with `og.png`, when the sitemap, `robots.txt` and canonical links
-disagree about the site's pages, when the site or README load anything remote, or when the README header,
-`plugin.toml` and the palette commands in `window.luau` disagree about the name.
+references an asset the deployment would not serve, when a staged copy is not ignored by Git or would not
+redeploy, when `og:image:width`/`og:image:height` disagree with `og.png`, when the sitemap, `robots.txt`,
+`llms.txt` and canonical links disagree about the site's pages, when the site or README load anything remote
+beyond the sanctioned shields.io badges, when the rendered media no longer match `docs/media/manifest.json`,
+when a retired name survives anywhere, when the README header, `plugin.toml`, the palette commands in
+`window.luau` and the site disagree about the name, the versions or the exercised Tern, OMP and SidePulse
+revisions, when an owned surface drops the standing disclaimer, or when a documented test count goes stale.
 
 ### Regeneration
 
