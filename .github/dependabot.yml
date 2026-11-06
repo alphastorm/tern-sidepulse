@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Runtime and test code use the Python 3.10+ standard library only (no pip dependencies).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns:
+          - "*"

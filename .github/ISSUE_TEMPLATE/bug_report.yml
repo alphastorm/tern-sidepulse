@@ -1,0 +1,78 @@
+name: Bug report
+description: Report reproducible incorrect behavior of tern-sidepulse without including transcripts or private paths
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Privacy note:** Review `~/.local/state/tern-sidepulse/doctor.json` before pasting any diagnostic output, redact usernames and private filesystem paths, and never paste Oh My Pi (OMP) transcripts, prompts, or pane titles. Report security vulnerabilities privately at https://github.com/alphastorm/tern-sidepulse/security/advisories/new instead of opening a public issue.
+  - type: input
+    id: tern-version
+    attributes:
+      label: Tern version
+      description: Output of `tern --version`
+      placeholder: "0.9.12 (e498b49)"
+    validations:
+      required: true
+  - type: input
+    id: omp-version
+    attributes:
+      label: Oh My Pi (OMP) version
+      description: Output of `omp --version`
+      placeholder: "18.16.0"
+    validations:
+      required: true
+  - type: input
+    id: sidepulse-version
+    attributes:
+      label: SidePulse version or revision
+      description: Version or revision of the installed SidePulse package or app
+      placeholder: "0.2.4.dev6+gffb1d3c2f (revision ffb1d3c2)"
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Output of `sw_vers`
+      placeholder: "27.2 (Apple Silicon)"
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python path and version
+      description: Interpreter path and `python3 --version` (also recorded in `~/.local/state/tern-sidepulse/doctor.json`)
+      placeholder: "/opt/homebrew/bin/python3 (3.13.18)"
+    validations:
+      required: true
+  - type: input
+    id: doctor-toast
+    attributes:
+      label: "tern-sidepulse: doctor toast line"
+      description: "Run `tern-sidepulse: doctor` from the Tern command palette (or write `plugin did not load` if the command is unavailable)"
+      placeholder: "ok: 0 issue(s); socket delivery is not an LED check"
+    validations:
+      required: true
+  - type: textarea
+    id: expected-vs-actual
+    attributes:
+      label: Expected vs. actual behavior
+      description: Describe what you expected to happen, what happened instead, and the steps to reproduce.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Optional. Review `~/.local/state/tern-sidepulse/doctor.json` and `~/.local/state/tern-sidepulse/coordinator.log` before pasting; redact usernames and private paths, and never paste transcripts.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Privacy and scope checks
+      options:
+        - label: I reviewed `~/.local/state/tern-sidepulse/doctor.json` (if included) and verified this report contains no transcripts, prompts, pane titles, or unredacted private paths.
+          required: true
+        - label: This is not a security vulnerability requiring private disclosure.
+          required: true

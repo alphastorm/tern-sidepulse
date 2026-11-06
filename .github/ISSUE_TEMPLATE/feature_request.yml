@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a scoped improvement to tern-sidepulse
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the workflow problem with Tern, Oh My Pi (OMP), or SidePulse rather than only a preferred implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain the user-visible behavior and how it fits within the per-window observer and local coordinator design.
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy and security impact
+      description: Confirm how the change preserves the six-field agent read boundary, local-only sockets, and standard-library-only runtime.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope checks
+      options:
+        - label: This keeps the plugin within its read-only status boundary (never reading transcripts, prompts, or pane titles, and never mutating Tern windows).
+          required: true
+        - label: I understand that the runtime and tests use the Python 3.10+ standard library only.
+          required: true
