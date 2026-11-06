@@ -61,7 +61,7 @@ class CliTest(unittest.TestCase):
         self.assertTrue(self.ui.wait_for("idle_ready"), "startup neutral reaches the receiver")
         code, ack, _ = run_bridge(["snapshot"], {"observer": {"window_key": "w2"}, "epoch": reg["epoch"], "generation": reg["generation"], "seq": 1, "coverage": "complete", "observations": [{"pane": 7, "state": "waiting_input"}]}, self.env)
         self.assertTrue(ack["accepted"], ack)
-        self.assertEqual(ack["desired"], "waiting_for_input")
+        self.assertEqual(ack["rows"], {"waiting_for_input": 1})
         self.assertTrue(self.ui.wait_for("waiting_for_input"))
         self.assertTrue(self.svc.wait_for("waiting_for_input"))
 

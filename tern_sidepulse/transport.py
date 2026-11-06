@@ -1,5 +1,6 @@
 """SidePulse wire contract and per-receiver-family delivery with bounded retry.
 
+This module owns the reduction of per-pane rows to one mode and dies with the hook protocol.
 Verified against the inspected SidePulse revision (``docs/compatibility.md``): UTF-8 JSON on an
 ``AF_UNIX``/``SOCK_STREAM`` socket, one object per connection, framed by closing the write
 side. The envelope is ``{"provider": "omp", "line": {...}}``; the receiver reads to EOF and
@@ -14,11 +15,11 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 from . import VERSION
 from .clock import Clock
-from .reducer import BLOCKED_ERROR, COMPLETED, IDLE_READY, MODES, WAITING_FOR_INPUT, WORKING
+from .reducer import BLOCKED_ERROR, COMPLETED, IDLE_READY, MODE_PRIORITY, MODES, WAITING_FOR_INPUT, WORKING, Row
 
 PROVIDER = "omp"
 SEND_TIMEOUT_SECONDS = 0.2  # upstream's per-attempt deadline
@@ -41,6 +42,15 @@ EVENT_FOR_MODE = {
 }
 ACTIVE_MODES = frozenset({WORKING, WAITING_FOR_INPUT, BLOCKED_ERROR})
 TITLE = "OMP in Tern"
+
+
+def combined_mode(rows: Iterable[Row]) -> str:
+    """The hook protocol's one display mode, neutral when no rows contribute."""
+    best = IDLE_READY
+    for row in rows:
+        if MODE_PRIORITY[row.mode] < MODE_PRIORITY[best]:
+            best = row.mode
+    return best
 
 
 def iso_utc(wall: float) -> str:
@@ -158,6 +168,12 @@ class SidePulseTransport:
         if self.log:
             self.log(message)
 
+    def publish(self, rows: Iterable[Row], *, force: bool = False) -> None:
+        mode = combined_mode(rows)
+        if mode != self.desired:
+            self._log(f"desired {self.desired} -> {mode}")
+        self.set_desired(mode, force=force)
+
     def set_desired(self, mode: str, force: bool = False) -> bool:
         """Point every family at ``mode``. A change goes out promptly; a family already in backoff keeps its schedule."""
         changed = mode != self.desired
@@ -254,6 +270,23 @@ class SidePulseTransport:
 
     def all_delivered(self, mode: str) -> bool:
         return all(family.delivered_mode == mode and not family.pending for family in self.families)
+
+    def undelivered_neutral(self) -> list[str]:
+        return [
+            family.name
+            for family in self.families
+            if family.delivered_mode not in (None, IDLE_READY)
+            or (family.delivered_mode is None and family.pending and family.receiver_present())
+        ]
+
+    def neutral_delivered(self) -> bool:
+        return self.all_delivered(IDLE_READY)
+
+    def delivery_summary(self) -> dict:
+        return {
+            family.name: {"mode": family.delivered_mode, "pending": family.pending, "error": family.last_error}
+            for family in self.families
+        }
 
     def next_due(self) -> float | None:
         due = [family.next_attempt_at for family in self.families if family.pending]

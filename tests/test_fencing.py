@@ -1,6 +1,6 @@
 import unittest
 
-from tests.helpers import OBS, activate, idle, make_coordinator, register, snapshot, working
+from tests.helpers import OBS, activate, combined_mode, idle, make_coordinator, register, snapshot, working
 
 from tern_sidepulse import VERSION
 from tern_sidepulse.coordinator import ProtocolError, decode_request
@@ -29,7 +29,7 @@ class FencingTest(unittest.TestCase):
         self.assertEqual(late["error"], "stale_generation")
         again = snapshot(c, first["generation"], first["epoch"], 6, [idle(1)])
         self.assertEqual(again["error"], "expired_generation")
-        self.assertEqual(c.desired, "working")
+        self.assertEqual(combined_mode(c), "working")
 
     def test_unactivated_higher_token_cannot_block_live_generation(self):
         c, _, _, _, _ = make_coordinator()
@@ -37,7 +37,7 @@ class FencingTest(unittest.TestCase):
         register(c)  # a dropped VM's registration: allocated, never activated
         ack = snapshot(c, gen, epoch, 2, [idle(1)])
         self.assertTrue(ack["accepted"])
-        self.assertEqual(c.desired, "idle_ready")
+        self.assertEqual(combined_mode(c), "idle_ready")
 
     def test_replacing_a_generation_rejects_the_old_one_even_with_higher_seq(self):
         c, _, _, _, _ = make_coordinator()
@@ -45,7 +45,7 @@ class FencingTest(unittest.TestCase):
         reg = register(c)
         snapshot(c, reg["generation"], epoch, 1, [idle(1)])
         self.assertEqual(snapshot(c, gen, epoch, 50, [working(1)])["error"], "expired_generation")
-        self.assertEqual(c.desired, "idle_ready")
+        self.assertEqual(combined_mode(c), "idle_ready")
 
     def test_sequence_rules(self):
         c, clock, _, _, _ = make_coordinator()
@@ -54,30 +54,32 @@ class FencingTest(unittest.TestCase):
         dup = snapshot(c, gen, epoch, 1, [idle(1)])
         self.assertTrue(dup["duplicate"])
         self.assertFalse(dup["renewed"])
-        self.assertEqual(c.desired, "working", "a duplicate seq carries no new content")
+        self.assertEqual(combined_mode(c), "working", "a duplicate seq carries no new content")
         self.assertEqual(snapshot(c, gen, epoch, 0, [idle(1)])["error"], "bad_request")
         snapshot(c, gen, epoch, 3, [idle(1)])
         self.assertEqual(snapshot(c, gen, epoch, 2, [working(1)])["error"], "seq_not_increasing")
-        self.assertEqual(c.desired, "idle_ready")
+        self.assertEqual(combined_mode(c), "idle_ready")
 
     def test_expired_lease_retires_the_generation(self):
         c, clock, _, _, _ = make_coordinator(Limits(lease=5))
         gen, epoch = activate(c, [working(1)])
         clock.advance(6)
         self.assertEqual(snapshot(c, gen, epoch, 2, [working(1)])["error"], "expired_generation")
-        self.assertEqual(c.desired, "idle_ready")
+        self.assertEqual(combined_mode(c), "idle_ready")
 
     def test_disable_revokes_everything_until_enable(self):
         c, _, sender, _, latch = make_coordinator()
         gen, epoch = activate(c, [working(1)])
         self.assertTrue(c.handle({"schema": 1, "op": "disable"})["disabled"])
         self.assertEqual(latch, [True])
-        self.assertEqual(c.desired, "idle_ready")
+        self.assertEqual(combined_mode(c), "idle_ready")
+        self.assertEqual(c.rows, ())
+        self.assertEqual(c.status()["rows"], {})
         self.assertEqual(snapshot(c, gen, epoch, 2, [working(1)])["error"], "disabled")
         self.assertEqual(register(c)["error"], "disabled")
         c.handle({"schema": 1, "op": "enable"})
         activate(c, [working(1)])
-        self.assertEqual(c.desired, "working")
+        self.assertEqual(combined_mode(c), "working")
         self.assertEqual(sender.modes_for("relay-events.sock")[-2:], ["idle_ready", "working"])
 
     def test_token_eviction_and_bounded_bookkeeping(self):

@@ -1,11 +1,9 @@
-"""Status semantics: Tern observations → one SidePulse mode.
-
-Applied per observer and then across observers. Adding the same observation twice never
-changes the result: this is display-level duplicate tolerance, not cross-window identity.
-"""
+"""Tern observations → per-pane rows (mode + label)."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Iterable
 
 # SidePulse modes this bridge emits, highest priority first.
 BLOCKED_ERROR = "blocked_error"
@@ -28,6 +26,10 @@ NOTICE_DONE = "done"
 NOTICE_FAILED = "failed"
 NOTICE_KINDS = frozenset({NOTICE_DONE, NOTICE_FAILED})
 
+RowKey = tuple[str, str]
+LABEL_MAX_CHARS = 96
+_LABEL_DROPPED = re.compile("[\x00-\x1f\x7f-\x9f\ud800-\udfff\ue000-\uf8ff\U000f0000-\U0010ffff]")
+
 
 @dataclass(frozen=True)
 class Observation:
@@ -35,6 +37,40 @@ class Observation:
     state: str
     notice_id: str | None = None
     notice_kind: str | None = None
+    host: str = "local"
+    label: str | None = None
+
+    @property
+    def key(self) -> RowKey:
+        return self.host, self.pane
+
+
+@dataclass(frozen=True)
+class Row:
+    host: str
+    pane: str
+    mode: str
+    label: str | None
+
+
+def sanitize_label(raw: str) -> str | None:
+    """Keep bounded display text without status glyphs, controls or lone surrogates."""
+    text = _LABEL_DROPPED.sub("", " ".join(raw.split()))
+    text = " ".join(text.split())[:LABEL_MAX_CHARS].rstrip()
+    return text or None
+
+
+def reduce_rows(contributions: Iterable[tuple[RowKey, str, int, str | None]]) -> tuple[Row, ...]:
+    """Deduplicate row keys, keeping the highest mode and newest non-empty label."""
+    reduced: dict[RowKey, tuple[str, int, str | None]] = {}
+    for key, mode, order, label in contributions:
+        best_mode, label_order, best_label = reduced.get(key, (mode, -1, None))
+        if MODE_PRIORITY[mode] < MODE_PRIORITY[best_mode]:
+            best_mode = mode
+        if label is not None and order > label_order:
+            label_order, best_label = order, label
+        reduced[key] = best_mode, label_order, best_label
+    return tuple(Row(host, pane, mode, label) for (host, pane), (mode, _, label) in sorted(reduced.items()))
 
 
 def pane_mode(state: str, active_notice_kind: str | None) -> str | None:
@@ -59,11 +95,3 @@ def pane_mode(state: str, active_notice_kind: str | None) -> str | None:
 def notice_clears(state: str) -> bool:
     """Working or waiting states clear a pane's outcome notice at once."""
     return state in (STATE_WORKING, STATE_WAITING)
-
-
-def aggregate(modes: list[str | None]) -> str:
-    best = IDLE_READY
-    for mode in modes:
-        if mode is not None and MODE_PRIORITY[mode] < MODE_PRIORITY[best]:
-            best = mode
-    return best

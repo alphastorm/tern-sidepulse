@@ -21,7 +21,7 @@ class Limits:
     max_observers: int = 64
     max_observations: int = 512
     max_tokens: int = 256
-    max_request_bytes: int = 256 * 1024
+    max_request_bytes: int = 1024 * 1024
     read_deadline: float = 2.0
 
     def to_dict(self) -> dict:
