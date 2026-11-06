@@ -1,6 +1,6 @@
 # Compatibility and contract probe
 
-Versions actually exercised on the development laptop (November 5, 2026):
+Versions exercised on the development laptop (November 5, 2026):
 
 | Component | Version | Notes |
 | --- | --- | --- |
@@ -13,11 +13,11 @@ Versions actually exercised on the development laptop (November 5, 2026):
 | Luau tooling | luau 0.745 (`luau-analyze`), luau-lsp 1.70.1 (`luau-lsp analyze --definitions=types/tern.d.luau`) | Development/CI checks only |
 | Remote host | A Mac Studio attached over Tern remoting, Tern 0.9.12 there too | No SidePulse, helper, or service on the remote host |
 
-The manifest has no minimum-API field; the plugin probes the members it needs at load (`cx.agents:list`, `cx.hosts:list`, `cx.session:surface`, `tern.process.run`, each under `pcall`) and, when one is missing, stays inert and reports the reason through the doctor toast and `doctor.json` instead of assuming a version. `tern.timer` is used by the entry chunk itself, so a build without it fails to load the plugin outright.
+`plugin.toml` has no minimum-API field. At load, `window.luau` probes `cx.agents:list`, `cx.hosts:list`, `cx.session:surface`, and `tern.process.run` under `pcall`; when any member is missing, the window stays inert and reports the missing member through the `SidePulse bridge: doctor` toast and `doctor.json`. `tern.timer` runs in the entry chunk itself, so a Tern build without `tern.timer` fails to load the plugin outright.
 
 ## Generated declarations vs. the inspected SDK
 
-`tern plugin types` from 0.9.12 agrees with the inspected `plugins/tern.d.luau` for every member this plugin uses:
+`tern plugin types` from Tern 0.9.12 (pinned as `types/tern.d.luau`) matches `plugins/tern.d.luau` in the `stencil-hq/tern-sdk` `a3ba62fd` baseline for every member this plugin uses:
 
 - `AgentsCx:list(): {AgentBlock}` with `AgentBlock = {pane, command?, model?, cwd, state, last_message?, delivery_error?}` and `state` in `idle | working | waiting_input | exited`.
 - `HostsCx:list(): {ManagedHost}` with `state` in `connecting | connected | stalled | verify | reconnecting | failed`, plus `sessions` and `panes` membership.
@@ -25,11 +25,11 @@ The manifest has no minimum-API field; the plugin probes the members it needs at
 - Events `agent_state({pane, old?, new})`, `agent_finished({pane, result})` with `result` in `done | failed | exited | closed`, `pane_closed`, `session_ended`, `window_start`, `budget`.
 - `tern.process.run(argv, {stdin, env, timeout_ms}, cb)`, `tern.timer`, `tern.kv`, `tern.fs`, `tern.plugin.data`, `cx:window_key()`.
 
-Observed but undocumented: every `cx.agents:list()` row also carries `host` (the host id from `cx.hosts:list()`), `program` (`"omp"`), `kind` (`"agent"`), `alive`, `session`, `tab`, `busy`, `at_prompt`, `alert`, `title`, `running`, `last` and, while working, `progress = {percent, state}`. The plugin reads `host` and `alive` when present and falls back to the documented fields when absent; `kind` and `program` are counted in diagnostics only and never decide classification, so a Tern that reports other values (say the native pane kind) cannot make sessions disappear.
+Observed on 0.9.12 but undocumented in `types/tern.d.luau`: every `cx.agents:list()` row also carries `host` (the host id from `cx.hosts:list()`), `program` (`"omp"`), `kind` (`"agent"`), `alive`, `session`, `tab`, `busy`, `at_prompt`, `alert`, `title`, `running`, `last`, and, while working, `progress = {percent, state}`. The plugin reads `host` and `alive` when present and falls back to the documented fields (`host.panes` and `row.state`) when absent. `kind` and `program` are counted in diagnostics only and never decide classification, so a Tern build that reports different values cannot hide OMP sessions.
 
 ## Contract probe results
 
-A throwaway window plugin recorded projections of the rows (never the rows themselves, titles, cwd or transcript text) into its data directory while disposable OMP sessions were driven from the CLI.
+A disposable probe plugin recorded row projections (never raw rows, titles, `cwd`, or transcript text) while test OMP sessions were driven from the CLI:
 
 | Probe | Result |
 | --- | --- |
@@ -51,14 +51,15 @@ A throwaway window plugin recorded projections of the rows (never the rows thems
 
 Consequences built into the plugin:
 
-- Classification is the current surface's `role == "omp.session"`, nothing else, re-read on every reconciliation pass (0.01–0.1 ms per pane; the last successful answer only bridges a query that fails outright). A missing surface (OMP still starting) is counted on the next pass that sees the role; a pane whose role changes in place drops out on the next pass. `program` and `kind` are diagnostics only: `tern new tab -- env … omp` reports `program = "env"`, so a program-name rule would wrongly exclude wrapped launches. Titles, cwd and missing `command` are never evidence.
-- A 5 s reconciliation timer re-enumerates everything because daemon-side closes are silent in the window. Against the 15 s lease that tolerates one failed helper call; two consecutive failures expire the window and it registers again on the next call (about 150 ms of withdrawn contribution).
-- Observer identity is `(parent pid of the helper, TERN_WINDOW_KEY)`; pane ids are opaque within that observer. A helper whose parent pid changes on every call (a forking shim configured as `python`) is fenced on every snapshot; after three fences in a row the window backs off exponentially to 30 s instead of re-registering continuously, and doctor names the cause.
-- An interpreter that answers `python_too_old` (exit status 3 with a JSON body) is rejected for the life of the VM and the next candidate is tried; `/usr/bin/python3` is only ever a candidate when the Command Line Tools provide it.
+- Classification checks only `surface.role == "omp.session"`, re-read on every 5 s reconciliation pass (0.01–0.1 ms per pane; the cached result only bridges a surface query that fails outright). A missing surface (OMP still starting) is counted on the next pass that sees the role, and a pane whose role changes in place drops out on the next pass. `program` and `kind` are diagnostics only because wrapped launches such as `tern new tab -- env … omp` report `program = "env"`, while titles, `cwd`, and missing `command` are never used as evidence.
+- A 5 s reconciliation timer re-enumerates panes because daemon-side closes emit no window event. Each window holds a 15 s *lease* (an expiry timer at the coordinator, renewed by every complete snapshot), which tolerates one failed helper call; two consecutive failures expire the lease and withdraw that window's contribution for the ~150 ms needed to register again on the next call.
+- Each window registers as an *observer* (the per-window `window.luau` instance reporting snapshots) identified by `(parent pid of the helper, TERN_WINDOW_KEY)`, and pane ids are opaque within that observer. A helper whose parent pid changes on every call (such as a forking wrapper configured as `python`) is fenced on every snapshot; after three consecutive fence rejections the window backs off exponentially (`500 * 2^n` ms, capped at 30 s) instead of re-registering continuously, and `doctor` reports the cause.
+- An interpreter that exits with status 3 (`python_too_old`, with a JSON body; on this laptop `/usr/bin/python3`, 3.9.6) is rejected for the life of the window VM and the next candidate is tried; `/usr/bin/python3` is tried last and only when `/Library/Developer/CommandLineTools/usr/bin/python3` exists.
+- The coordinator answers each client on a blocking write with a 0.5 s deadline across at most 32 concurrent connections; a same-user client that connects and never reads can delay the loop by at most 0.5 s per connection. Lease and notice deadlines are checked against the clock after each request and on every 1 s reaper tick, so a stalled loop withdraws state rather than prolonging it.
 
 ## SidePulse contract (verified against the installed collector)
 
-Driven through the installed package's `parse_log_line` + `LiveAgentMonitor` with provider `omp`:
+Driven through the installed package's `parse_log_line` and `LiveAgentMonitor` with provider `omp` (`tests/fixtures/sidepulse_probe.py` checks the mode after each step of the status and trap rows in this table):
 
 | Sent (`hook_event_name`, `sidepulse_status`) | Resulting status | Note |
 | --- | --- | --- |
@@ -73,11 +74,11 @@ Driven through the installed package's `parse_log_line` + `LiveAgentMonitor` wit
 | `agent_id` present | status key becomes `omp:agent:<id>` | Omitted so it can never supersede the session identity |
 | Older `logged_at` than the current status | still replaces | The collector keeps no ordering; the coordinator serializes sends |
 
-Receivers on this laptop: the menu-bar app (`io.sidepulse.agentstatus`) on `~/.local/state/sidepulse/agent-monitor/events.sock` and the headless service (`io.sidepulse.service`) on `relay-events.sock` in the same directory (upstream falls back to `/tmp/sidepulse-relay-<uid>-<hash>.sock` when that path exceeds 96 bytes; the bridge mirrors it). Each keeps its own `LiveAgentMonitor`, so both receive every event. Read-only inspection of the result: `~/.local/state/sidepulse/agent-monitor/status-history.jsonl` (`agent_status`, `display_status`, written by the menu-bar app on refresh) and `latest.json` (written by whichever receiver ingested last). A SidePulse Pro (`/Volumes/SidePulse`, display `agent`) is attached, so LED checks are possible; they are reported separately from socket delivery.
+Two receivers run on this laptop: the menu-bar app (`io.sidepulse.agentstatus`) on `~/.local/state/sidepulse/agent-monitor/events.sock` and the headless service (`io.sidepulse.service`) on `relay-events.sock` in the same directory. Upstream SidePulse falls back to `/tmp/sidepulse-relay-<uid>-<hash>.sock` when the `relay-events.sock` path exceeds 96 bytes, and the bridge mirrors that fallback. Each receiver keeps its own `LiveAgentMonitor`, so the coordinator sends every event to both families. For read-only inspection, the menu-bar app writes `~/.local/state/sidepulse/agent-monitor/status-history.jsonl` (`agent_status` and `display_status`) on refresh, and whichever receiver ingested last writes `~/.local/state/sidepulse/agent-monitor/latest.json`. A SidePulse Pro USB LED device (`/Volumes/SidePulse`, display mode `agent`) is attached for physical LED checks, which are reported separately from socket delivery.
 
 ## Integration checks on the laptop (real Tern, real SidePulse, linked plugin)
 
-Each check reads the coordinator log, `bridge.py status`, and SidePulse's own `status-history.jsonl` / `latest.json`; none of them patches SidePulse state. A SidePulse Pro was attached with its display set to `agent`, so the LED followed the menu-bar app's aggregate, but the figures below are socket/record observations, not LED measurements.
+Each check reads `coordinator.log`, `bridge.py status`, and SidePulse's `status-history.jsonl` and `latest.json` without patching SidePulse state. A SidePulse Pro was attached with its display set to `agent`, so the LED followed the menu-bar app's aggregate, while the timings below come from socket and state-file records:
 
 | Check | Observed |
 | --- | --- |
@@ -92,7 +93,12 @@ Each check reads the coordinator log, `bridge.py status`, and SidePulse's own `s
 | `time.monotonic()` on this macOS | `mach_absolute_time()`, which pauses during sleep; the coordinator compares wall and monotonic deltas on every request and tick, so either clock behaviour is handled |
 | Linked checkout with git's fsmonitor daemon | Every git command touched `.git/fsmonitor--daemon/cookies` and reloaded the window (a new generation each time); `git config --local core.fsmonitor false` in the checkout stops it; installed copies carry no `.git` |
 
-Automated: 93 unit/integration tests (`python3 -B -m unittest discover -s tests -t .`) on Python 3.13 and 3.15 locally, 3.10 and 3.13 in CI, including an end-to-end subprocess coordinator with fake receivers, hostile-client cases (deep nesting, non-finite numbers, unprintable observer keys, symlinked or FIFO `config.json`), the optional contract test against the installed SidePulse normalizer, and the slow default-limits test (neutral 15 s after the last snapshot, inside the 20 s target). The window half's retry policy (backoff to 30 s while the coordinator is unavailable or every snapshot is fenced, replacement of a too-old interpreter, recovery logged at warn) was exercised with a throwaway `luau` harness driving `window.luau` against a fake `tern`.
+Automated suite ([`../README.md#development`](../README.md#development)): 96 unit and integration tests in total (`python3 -B -m unittest discover -s tests -t .`), verified on Python 3.13.18 and 3.15.2 locally and on Python 3.10 and 3.13 in CI. The 96 tests cover an end-to-end subprocess coordinator with fake receivers, hostile-client inputs (deep nesting, `NaN`/`Infinity`, non-printable observer keys, and symlinked, FIFO, or oversized `config.json`), and include two conditional tests:
+
+- `tests/test_sidepulse_contract.py` (`SidePulseContractTest.test_mapping_table_and_traps`): runs when a SidePulse interpreter exists at `SIDEPULSE_PYTHON` or `~/.local/share/sidepulse/venv/bin/python` and skips otherwise.
+- `tests/test_e2e.py` (`EndToEndTest.test_default_limits_neutral_within_20s`): runs only when `TERN_SIDEPULSE_SLOW_TESTS=1` is set (skipped in the default fast run, which reports `Ran 96 tests … OK (skipped=1)` when SidePulse is installed) and checks that an unrenewed 15 s lease reaches `idle_ready` within the 20 s target.
+
+The window half's retry policy (backoff up to 30 s while the coordinator is unavailable or every snapshot is fenced, replacement of a `python_too_old` interpreter, and `warn`-level failure/recovery logging) was exercised with a standalone `luau` harness driving `window.luau` against a fake `tern` environment.
 
 Not exercised here, with the exact check still to run:
 
@@ -101,10 +107,4 @@ Not exercised here, with the exact check still to run:
 - Remote disconnect/reconnect: disconnect the remote host from the host dialog with a working remote session; the next reconciliation drops its contribution (`host_unavailable` in doctor); reconnect and confirm it returns.
 - The two-window close-one case with both windows showing OMP sessions (window 2 above showed none).
 
-## Known limitations
-
-- Tern samples agent state: brief transitions (a turn that fails within a second) can lack a `working` sample; the bridge still shows the outcome notice.
-- Pane ids are window-local; the bridge emits one synthetic SidePulse session and reduces duplicates idempotently rather than counting distinct OMP agents.
-- Cleanup after the last window closes depends on the coordinator staying alive and SidePulse being reachable within the final 60 s grace; a hard-killed coordinator or a longer outage leaves the last mode until the next coordinator start neutralizes the same identity.
-- Remote coverage follows the window's host connection state; nothing is polled on the remote host after all windows close.
-- A pane whose live surface is not `omp.session` (OMP still starting, or a non-OMP agent) is not counted until a reconciliation sees that role.
+User-facing runtime limitations are listed in [`../README.md#known-limitations`](../README.md#known-limitations).
