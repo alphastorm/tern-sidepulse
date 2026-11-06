@@ -8,5 +8,5 @@
 - [ ] `luau-lsp analyze --definitions=types/tern.d.luau window.luau` passes
 - [ ] Documentation facts name the exact Tern, Oh My Pi (OMP), SidePulse, and macOS versions exercised, and never describe a socket write as LED output
 - [ ] `python3 scripts/render_assets.py --check` passes when `assets/`, `docs/media/`, or `docs/BRAND.md` changed
-- [ ] Privacy invariants in `tests/test_privacy.py` are untouched (only the six agent fields, four host fields, and `surface.role` are read; no transcripts, prompts, titles, or private paths appear in this PR)
+- [ ] Privacy invariants in `tests/test_privacy.py` are untouched (only the six agent fields, the six host fields, `surface.role`, and OMP tab names or pane titles are read; labels and host keys never leave coordinator memory; and this PR description and diff contain no real user transcripts, prompts, pane titles, or private paths)
 - [ ] `CHANGELOG.md` is updated for user-visible changes

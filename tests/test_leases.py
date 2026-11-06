@@ -1,6 +1,6 @@
 import unittest
 
-from tests.helpers import activate, advance, idle, make_coordinator, register, snapshot, working
+from tests.helpers import activate, advance, combined_mode, idle, make_coordinator, register, snapshot, working
 
 from tern_sidepulse.limits import Limits
 
@@ -12,25 +12,25 @@ class LeaseTest(unittest.TestCase):
         advance(c, clock, 10)
         ack = snapshot(c, gen, epoch, 2, [], coverage="unknown")
         self.assertFalse(ack["renewed"])
-        self.assertEqual(c.desired, "working")
+        self.assertEqual(combined_mode(c), "working")
         advance(c, clock, 4)
-        self.assertEqual(c.desired, "working")
+        self.assertEqual(combined_mode(c), "working")
         advance(c, clock, 1.5)
-        self.assertEqual(c.desired, "idle_ready", "the original 15 s lease expired despite the heartbeat")
+        self.assertEqual(combined_mode(c), "idle_ready", "the original 15 s lease expired despite the heartbeat")
 
     def test_genuine_empty_snapshot_clears_now(self):
         c, _, _, _, _ = make_coordinator()
         gen, epoch = activate(c, [working(1)])
         snapshot(c, gen, epoch, 2, [])
-        self.assertEqual(c.desired, "idle_ready")
+        self.assertEqual(combined_mode(c), "idle_ready")
 
     def test_vanished_window_expires_and_neutral_is_sent(self):
         c, clock, sender, _, _ = make_coordinator(Limits(lease=15, reaper=1))
         activate(c, [working(1)])
         advance(c, clock, 14)
-        self.assertEqual(c.desired, "working")
+        self.assertEqual(combined_mode(c), "working")
         advance(c, clock, 1)
-        self.assertEqual(c.desired, "idle_ready")
+        self.assertEqual(combined_mode(c), "idle_ready")
         self.assertEqual(sender.modes_for("events.sock")[-1], "idle_ready")
         self.assertEqual(c.counters["expired_observers"], 1)
 
@@ -54,7 +54,7 @@ class LeaseTest(unittest.TestCase):
         activate(c, [working(1)])
         sender.refuse = {"events.sock", "relay-events.sock"}
         advance(c, clock, 3)
-        self.assertEqual(c.desired, "idle_ready")
+        self.assertEqual(combined_mode(c), "idle_ready")
         # Both families still hold "working": the coordinator must not leave after the short grace.
         self.assertIsNone(advance(c, clock, 10))
         sender.refuse = set()
@@ -93,27 +93,28 @@ class LeaseTest(unittest.TestCase):
 
 class ClockDiscontinuityTest(unittest.TestCase):
     def test_wall_jump_makes_output_idle_before_the_first_request_after_wake(self):
-        c, clock, _, _, _ = make_coordinator(Limits(lease=15, done_notice=15))
+        c, clock, sender, _, _ = make_coordinator(Limits(lease=15, done_notice=15))
         other = {"parent_pid": 4242, "window_key": "2"}
         gen_a, epoch = activate(c, [idle(1, "1", "done")])
         activate(c, [working(2)], observer=other)
-        self.assertEqual(c.desired, "working")
+        self.assertEqual(combined_mode(c), "working")
         clock.advance(1, wall_seconds=7200)  # asleep for two hours; the monotonic clock paused
         # The first request after wake must not see pre-sleep state.
         ack = snapshot(c, gen_a, epoch, 2, [idle(1)])
-        self.assertEqual(ack["desired"], "idle_ready")
+        self.assertEqual(ack["rows"], {"idle_ready": 1})
+        self.assertEqual(sender.modes_for("events.sock")[-1], "idle_ready")
         self.assertEqual(c.discontinuities, 1)
         self.assertTrue(c.observers["4242:2"].uncertain)
         # Its own fresh snapshot restores the other window's work.
         snapshot(c, c.observers["4242:2"].generation, epoch, 2, [working(2)], observer=other)
-        self.assertEqual(c.desired, "working")
+        self.assertEqual(combined_mode(c), "working")
 
     def test_stalled_loop_also_counts(self):
         c, clock, _, _, _ = make_coordinator(Limits(lease=60, reaper=1, discontinuity=5))
         activate(c, [working(1)])
         clock.advance(30)
         c.tick()
-        self.assertEqual(c.desired, "idle_ready")
+        self.assertEqual(combined_mode(c), "idle_ready")
         self.assertEqual(c.discontinuities, 1)
 
 

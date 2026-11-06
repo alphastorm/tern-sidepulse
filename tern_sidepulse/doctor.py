@@ -73,11 +73,14 @@ def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: 
         _check(checks, "coordinator", "warn" if exc.reason == "not_running" else "error", f"not running ({exc.reason}); it starts with the next window snapshot")
     if status is not None:
         observers = status.get("observers", [])
+        modes = ", ".join(f"{mode} {count}" for mode, count in status.get("rows", {}).items()) or "none"
         _check(
             checks,
             "coordinator",
             "ok",
-            f"pid {status.get('pid')} epoch {status.get('epoch')} up {status.get('uptime_seconds')}s, desired {status.get('desired')}, {len(observers)} observer(s), disabled={status.get('disabled')}",
+            f"pid {status.get('pid')} epoch {status.get('epoch')} up {status.get('uptime_seconds')}s, "
+            f"rows {status.get('rows_total')} ({modes}), {status.get('rows_labelled')} labelled, "
+            f"{len(observers)} observer(s), disabled={status.get('disabled')}",
         )
         if window_key is not None:
             mine = f"{os.getppid()}:{window_key}"

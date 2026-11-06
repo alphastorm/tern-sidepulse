@@ -92,7 +92,7 @@ class ProtocolTest(unittest.TestCase):
     def test_partial_sender_is_dropped_without_starving_the_reaper(self):
         reg = self.fx.call({"schema": 1, "op": "register", "observer": {"parent_pid": 1, "window_key": ""}})
         ack = self.fx.call({"schema": 1, "op": "snapshot", "observer": {"parent_pid": 1, "window_key": ""}, "epoch": reg["epoch"], "generation": reg["generation"], "seq": 1, "coverage": "complete", "observations": [{"pane": 1, "state": "working"}]})
-        self.assertEqual(ack["desired"], "working")
+        self.assertEqual(ack["rows"], {"working": 1})
         slow = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         slow.connect(str(self.fx.socket_path))
         slow.sendall(b'{"schema": 1, "op": "sta')  # never finishes

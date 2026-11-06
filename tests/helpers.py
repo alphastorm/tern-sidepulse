@@ -208,7 +208,14 @@ def advance(coordinator: Coordinator, clock: FakeClock, seconds: float, step: fl
         remaining -= chunk
         result = coordinator.tick() or result
     return result
-    return coordinator, clock, sender, logs, latch
+
+
+def combined_mode(coordinator: Coordinator) -> str:
+    return coordinator.transport.desired
+
+
+def rows(coordinator: Coordinator) -> list[tuple[str, str, str, str | None]]:
+    return [(row.host, row.pane, row.mode, row.label) for row in coordinator.rows]
 
 
 OBS = {"parent_pid": 4242, "window_key": ""}
@@ -240,19 +247,33 @@ def activate(coordinator: Coordinator, observations: list, observer: dict | None
     return reg["generation"], reg["epoch"]
 
 
-def working(pane: int) -> dict:
-    return {"pane": pane, "state": "working"}
-
-
-def idle(pane: int, notice_id: str | None = None, kind: str = "done") -> dict:
-    obs: dict = {"pane": pane, "state": "idle"}
-    if notice_id is not None:
-        obs["notice"] = {"id": notice_id, "kind": kind}
+def working(pane: int, *, host: str | None = None, label: str | None = None) -> dict:
+    obs = {"pane": pane, "state": "working"}
+    if host is not None:
+        obs["host"] = host
+    if label is not None:
+        obs["label"] = label
     return obs
 
 
-def waiting(pane: int) -> dict:
-    return {"pane": pane, "state": "waiting_input"}
+def idle(pane: int, notice_id: str | None = None, kind: str = "done", *, host: str | None = None, label: str | None = None) -> dict:
+    obs: dict = {"pane": pane, "state": "idle"}
+    if notice_id is not None:
+        obs["notice"] = {"id": notice_id, "kind": kind}
+    if host is not None:
+        obs["host"] = host
+    if label is not None:
+        obs["label"] = label
+    return obs
+
+
+def waiting(pane: int, *, host: str | None = None, label: str | None = None) -> dict:
+    obs = {"pane": pane, "state": "waiting_input"}
+    if host is not None:
+        obs["host"] = host
+    if label is not None:
+        obs["label"] = label
+    return obs
 
 
 def helper_argv(env: dict) -> list[str]:
@@ -261,11 +282,11 @@ def helper_argv(env: dict) -> list[str]:
     return [sys.executable, *python_flags(Path(data) if data else None), str(BRIDGE)]
 
 
-def run_bridge(args: list[str], stdin: dict | None, env: dict, timeout: float = 15.0) -> tuple[int, dict, str]:
+def run_bridge(args: list[str], stdin: dict | None, env: dict, timeout: float = 15.0, *, raw_utf8: bool = False) -> tuple[int, dict, str]:
     """Run bridge.py in a subprocess; returns (code, parsed stdout, stderr). Non-JSON output becomes an error dict."""
     proc = subprocess.run(
         [*helper_argv(env), *args],
-        input=json.dumps(stdin or {}).encode("utf-8"),
+        input=json.dumps(stdin or {}, ensure_ascii=not raw_utf8).encode("utf-8"),
         capture_output=True,
         env=env,
         timeout=timeout,

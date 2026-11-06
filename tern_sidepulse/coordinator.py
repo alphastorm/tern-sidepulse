@@ -1,12 +1,11 @@
-"""The local coordinator: observer generations, leases, outcome notices and the desired SidePulse mode.
+"""The local coordinator: observer generations, leases, outcome notices and per-pane rows.
 
-One process per user holds the singleton lock, owns the stable bridge session and serializes
-every state change and every SidePulse send. Window observers register, then publish complete
-snapshots; the coordinator reduces them and keeps the display coherent after windows vanish.
+One process per user holds the singleton lock and serializes every state change. Complete
+window snapshots contribute rows keyed by host and pane; the transport owns delivery and any
+protocol-specific reduction. Labels stay in memory, never in reports, logs or acknowledgements.
 """
 from __future__ import annotations
 
-import json
 import os
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -17,15 +16,18 @@ from .clock import Clock
 from .jsonio import load_json
 from .limits import Limits
 from .reducer import (
-    IDLE_READY,
     KNOWN_STATES,
+    MODES,
     NOTICE_FAILED,
     NOTICE_KINDS,
     STATE_IDLE,
     Observation,
-    aggregate,
+    Row,
+    RowKey,
     notice_clears,
     pane_mode,
+    reduce_rows,
+    sanitize_label,
 )
 from .transport import SidePulseTransport, iso_utc
 
@@ -35,6 +37,9 @@ COVERAGE_UNKNOWN = "unknown"
 MAX_WINDOW_KEY = 64
 MAX_PANE_ID = 64
 MAX_NOTICE_ID = 64
+DEFAULT_HOST = "local"
+MAX_HOST_KEY = 128
+MAX_LABEL_INPUT = 1024
 MAX_RETIRED_NOTICES = 1024
 MAX_RETIRE_REASONS = 256
 DIAG_KEYS = (
@@ -50,6 +55,13 @@ DIAG_KEYS = (
     "too_many",
     "budget_pauses",
     "helper_failures",
+    "label_tab",
+    "label_title",
+    "label_none",
+    "labels_unavailable",
+    "labels_dropped",
+    "host_fallback",
+    "encode_failed",
 )
 DIAG_MAX = 100_000
 
@@ -85,9 +97,10 @@ class ObserverState:
     generation: int
     seq: int
     expires_at: float
-    observations: dict[str, Observation] = field(default_factory=dict)
-    notices: dict[str, NoticeTrack] = field(default_factory=dict)  # one track per pane
-    retired_notices: "OrderedDict[tuple[str, str], None]" = field(default_factory=OrderedDict)
+    observations: dict[RowKey, Observation] = field(default_factory=dict)
+    notices: dict[RowKey, NoticeTrack] = field(default_factory=dict)  # one track per row key
+    retired_notices: "OrderedDict[tuple[RowKey, str], None]" = field(default_factory=OrderedDict)
+    applied: int = 0
     coverage: str = COVERAGE_COMPLETE
     uncertain: bool = False
     last_ack: dict = field(default_factory=dict)
@@ -107,12 +120,13 @@ def observer_key(observer: object) -> str:
     return f"{parent_pid}:{window_key}"
 
 
-def parse_observations(raw: object, limit: int) -> dict[str, Observation]:
+def parse_observations(raw: object, limit: int) -> tuple[dict[RowKey, Observation], int]:
     if not isinstance(raw, list):
         raise ProtocolError("bad_request", "observations must be an array")
     if len(raw) > limit:
         raise ProtocolError("too_many_observations", "observation limit exceeded", limit=limit)
-    result: dict[str, Observation] = {}
+    result: dict[RowKey, Observation] = {}
+    labels_rejected = 0
     for item in raw:
         if not isinstance(item, dict):
             raise ProtocolError("bad_request", "observation must be an object")
@@ -139,9 +153,26 @@ def parse_observations(raw: object, limit: int) -> dict[str, Observation]:
             notice_kind = notice.get("kind")
             if not isinstance(notice_kind, str) or notice_kind not in NOTICE_KINDS:
                 raise ProtocolError("bad_request", "notice.kind must be done or failed")
-        # Duplicate pane ids within one snapshot reduce idempotently: keep the first.
-        result.setdefault(pane_id, Observation(pane_id, state, notice_id, notice_kind))
-    return result
+        host = item.get("host")
+        if host is None:
+            host = DEFAULT_HOST
+        elif (
+            not isinstance(host, str)
+            or not 1 <= len(host) <= MAX_HOST_KEY
+            or any(ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F or 0xD800 <= ord(char) <= 0xDFFF for char in host)
+        ):
+            raise ProtocolError("bad_request", "observation.host must be a short host key")
+        raw_label = item.get("label")
+        label = None
+        if raw_label is not None:
+            if isinstance(raw_label, str) and len(raw_label) <= MAX_LABEL_INPUT:
+                label = sanitize_label(raw_label)
+            else:
+                labels_rejected += 1
+        # Duplicate row keys within one snapshot keep the first observation and its label.
+        obs = Observation(pane_id, state, notice_id, notice_kind, host, label)
+        result.setdefault(obs.key, obs)
+    return result, labels_rejected
 
 
 def parse_diag(raw: object) -> dict:
@@ -182,7 +213,8 @@ class Coordinator:
         self.observers: dict[str, ObserverState] = {}
         self.retire_reason: "OrderedDict[int, str]" = OrderedDict()
         self.highest_activated: dict[str, int] = {}
-        self.desired = IDLE_READY
+        self.rows: tuple[Row, ...] = ()
+        self.apply_counter = 0
         self.empty_since: float | None = clock.monotonic()
         self.last_observation_at: float | None = None
         self.last_wall = clock.wall()
@@ -195,11 +227,12 @@ class Coordinator:
             "expired_observers": 0,
             "notices_expired": 0,
             "internal_errors": 0,
+            "labels_rejected": 0,
         }
         self.stop_requested = False
         self.stop_reason: str | None = None
         # Clear whatever a previous coordinator left under the same identity before publishing.
-        self.transport.set_desired(IDLE_READY, force=True)
+        self.transport.publish((), force=True)
         self.transport.tick()
 
     # ---- generations ----------------------------------------------------------------------
@@ -298,7 +331,8 @@ class Coordinator:
         coverage = request.get("coverage")
         if coverage not in (COVERAGE_COMPLETE, COVERAGE_UNKNOWN):
             raise ProtocolError("bad_request", "coverage must be complete or unknown")
-        observations = parse_observations(request.get("observations", []), self.limits.max_observations)
+        observations, labels_rejected = parse_observations(request.get("observations", []), self.limits.max_observations)
+        self.counters["labels_rejected"] += labels_rejected
         diag = parse_diag(request.get("diag"))
 
         now = self.clock.monotonic()
@@ -344,6 +378,8 @@ class Coordinator:
             observer.diag = diag
         renewed = False
         if coverage == COVERAGE_COMPLETE:
+            self.apply_counter += 1
+            observer.applied = self.apply_counter
             self.apply_observations(observer, observations, now)
             observer.expires_at = now + self.limits.lease
             observer.uncertain = False
@@ -359,8 +395,8 @@ class Coordinator:
             "activated": activated,
             "renewed": renewed,
             "lease_remaining": round(max(0.0, observer.expires_at - now), 3),
-            "desired": self.desired,
-            "delivery": self.delivery_summary(),
+            "rows": self.row_counts(),
+            "delivery": self.transport.delivery_summary(),
         }
         observer.last_ack = ack
         return dict(ack)
@@ -385,7 +421,13 @@ class Coordinator:
             self.log(f"could not persist the disabled latch: {type(exc).__name__}")
         self.recompute(self.clock.monotonic())
         self.log("disabled: observers revoked, neutral requested")
-        return {"disabled": True, "persisted": persisted, "desired": self.desired, "delivery": self.delivery_summary()}
+        return {
+            "disabled": True,
+            "persisted": persisted,
+            "rows": self.row_counts(),
+            "summary": self.rows_summary(),
+            "delivery": self.transport.delivery_summary(),
+        }
 
     def op_enable(self, _request: dict) -> dict:
         self.disabled = False
@@ -400,42 +442,42 @@ class Coordinator:
 
     def op_resync(self, _request: dict) -> dict:
         self.recompute(self.clock.monotonic())
-        self.transport.set_desired(self.desired, force=True)
+        self.transport.publish(self.rows, force=True)
         self.transport.tick()
-        return {"desired": self.desired, "delivery": self.delivery_summary()}
+        return {"rows": self.row_counts(), "summary": self.rows_summary(), "delivery": self.transport.delivery_summary()}
 
     # ---- state ----------------------------------------------------------------------------
 
-    def apply_observations(self, observer: ObserverState, observations: dict[str, Observation], now: float) -> None:
+    def apply_observations(self, observer: ObserverState, observations: dict[RowKey, Observation], now: float) -> None:
         """A complete snapshot replaces the observer's observations; a notice's deadline is fixed when first seen."""
-        for pane, obs in observations.items():
-            track = observer.notices.get(pane)
+        for key, obs in observations.items():
+            track = observer.notices.get(key)
             if notice_clears(obs.state):
                 # The pane resumed: whatever notice it had, or arrives with, can never show later.
                 if track is not None:
                     track.voided = True
                 if obs.notice_id is not None and (track is None or track.notice_id != obs.notice_id):
                     if track is not None:
-                        self._retire_notice(observer, pane, track.notice_id)
-                    observer.notices[pane] = NoticeTrack(obs.notice_id, obs.notice_kind or NOTICE_FAILED, now, voided=True)
+                        self._retire_notice(observer, key, track.notice_id)
+                    observer.notices[key] = NoticeTrack(obs.notice_id, obs.notice_kind or NOTICE_FAILED, now, voided=True)
                 continue
             if obs.notice_id is None:
                 continue  # an observation without a notice leaves any track inert; re-inclusion cannot restart it
             if track is None or track.notice_id != obs.notice_id:
                 if track is not None:
-                    self._retire_notice(observer, pane, track.notice_id)
+                    self._retire_notice(observer, key, track.notice_id)
                 track = NoticeTrack(obs.notice_id, obs.notice_kind or NOTICE_FAILED, now)
-                if (pane, obs.notice_id) in observer.retired_notices:
+                if (key, obs.notice_id) in observer.retired_notices:
                     track.voided = True
-                observer.notices[pane] = track
-        for pane in [pane for pane in observer.notices if pane not in observations]:
-            self._retire_notice(observer, pane, observer.notices[pane].notice_id)
-            del observer.notices[pane]
+                observer.notices[key] = track
+        for key in [key for key in observer.notices if key not in observations]:
+            self._retire_notice(observer, key, observer.notices[key].notice_id)
+            del observer.notices[key]
         observer.observations = observations
 
-    def _retire_notice(self, observer: ObserverState, pane: str, notice_id: str) -> None:
-        observer.retired_notices[(pane, notice_id)] = None
-        observer.retired_notices.move_to_end((pane, notice_id))
+    def _retire_notice(self, observer: ObserverState, key: RowKey, notice_id: str) -> None:
+        observer.retired_notices[(key, notice_id)] = None
+        observer.retired_notices.move_to_end((key, notice_id))
         while len(observer.retired_notices) > MAX_RETIRED_NOTICES:
             observer.retired_notices.popitem(last=False)
 
@@ -446,7 +488,7 @@ class Coordinator:
         """Pure: the notice kind still inside its deadline for this observation, else None."""
         if obs.notice_id is None:
             return None
-        track = observer.notices.get(obs.pane)
+        track = observer.notices.get(obs.key)
         if track is None or track.voided or track.notice_id != obs.notice_id:
             return None
         if now >= track.started + self._duration(track.kind):
@@ -488,17 +530,16 @@ class Coordinator:
     def recompute(self, now: float) -> None:
         self.expire(now)
         self._sweep_notices(now)
-        modes: list[str | None] = []
+        contributions = []
         for observer in self.observers.values():
             if observer.uncertain:
                 continue
             for obs in observer.observations.values():
-                modes.append(pane_mode(obs.state, self.notice_active(observer, obs, now)))
-        desired = IDLE_READY if self.disabled else aggregate(modes)
-        if desired != self.desired:
-            self.log(f"desired {self.desired} -> {desired}")
-        self.desired = desired
-        self.transport.set_desired(desired)
+                mode = pane_mode(obs.state, self.notice_active(observer, obs, now))
+                if mode is not None:
+                    contributions.append((obs.key, mode, observer.applied, obs.label))
+        self.rows = () if self.disabled else reduce_rows(contributions)
+        self.transport.publish(self.rows)
         if self.observers:
             self.empty_since = None
         elif self.empty_since is None:
@@ -511,7 +552,7 @@ class Coordinator:
             for obs in observer.observations.values():
                 if obs.notice_id is None or obs.state != STATE_IDLE:
                     continue
-                track = observer.notices.get(obs.pane)
+                track = observer.notices.get(obs.key)
                 if track is None or track.voided or track.notice_id != obs.notice_id:
                     continue
                 deadlines.append(track.started + self._duration(track.kind))
@@ -527,16 +568,11 @@ class Coordinator:
         if self.observers:
             return None
         idle_for = now - (self.empty_since if self.empty_since is not None else now)
-        needs_neutral = [
-            family
-            for family in self.transport.families
-            if family.delivered_mode not in (None, IDLE_READY)
-            or (family.delivered_mode is None and family.pending and family.receiver_present())
-        ]
+        needs_neutral = self.transport.undelivered_neutral()
         if not needs_neutral and idle_for >= self.limits.exit_grace:
             return "exit"
         if idle_for >= self.limits.final_grace:
-            self.log("final grace elapsed with undelivered neutral: " + ", ".join(f.name for f in needs_neutral))
+            self.log("final grace elapsed with undelivered neutral: " + ", ".join(needs_neutral))
             return "exit"
         return None
 
@@ -567,16 +603,23 @@ class Coordinator:
         for observer in list(self.observers.values()):
             self._note_retired(observer.generation, "shutdown")
         self.observers.clear()
-        self.transport.set_desired(IDLE_READY, force=not self.transport.all_delivered(IDLE_READY))
+        self.rows = ()
+        self.transport.publish((), force=not self.transport.neutral_delivered())
         self.transport.tick(immediate=True)
 
     # ---- reporting ------------------------------------------------------------------------
 
-    def delivery_summary(self) -> dict:
-        return {
-            family.name: {"mode": family.delivered_mode, "pending": family.pending, "error": family.last_error}
-            for family in self.transport.families
-        }
+    def row_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for row in self.rows:
+            counts[row.mode] = counts.get(row.mode, 0) + 1
+        return {mode: counts[mode] for mode in MODES if mode in counts}
+
+    def rows_summary(self) -> str:
+        if not self.rows:
+            return "no rows"
+        counts = ", ".join(f"{mode} {count}" for mode, count in self.row_counts().items())
+        return f"{len(self.rows)} rows: {counts}"
 
     def status(self) -> dict:
         now = self.clock.monotonic()
@@ -611,7 +654,9 @@ class Coordinator:
             "started_at": iso_utc(self.started_wall),
             "uptime_seconds": round(now - self.started_at, 3),
             "disabled": self.disabled,
-            "desired": self.desired,
+            "rows": self.row_counts(),
+            "rows_total": len(self.rows),
+            "rows_labelled": sum(row.label is not None for row in self.rows),
             "session_id": self.transport.session_id,
             "observers": observers,
             "tokens_outstanding": len(self.tokens),

@@ -4,7 +4,8 @@ import unittest
 
 from tests.helpers import FakeClock, FakeReceiver, RecordingSender, short_tmpdir
 
-from tern_sidepulse.transport import SidePulseTransport, build_line, encode_event
+from tern_sidepulse.reducer import Row
+from tern_sidepulse.transport import SidePulseTransport, build_line, combined_mode, encode_event
 
 
 def transport_with(sender: RecordingSender, clock: FakeClock, **kw) -> SidePulseTransport:
@@ -38,6 +39,96 @@ class WireFormatTest(unittest.TestCase):
     def test_unknown_mode_rejected(self):
         with self.assertRaises(ValueError):
             build_line("tool_running", "x", 0)
+
+
+class CombinedModeTest(unittest.TestCase):
+    def test_priority_order(self):
+        for modes, expected in (
+            (["working", "waiting_for_input", "working", "working"], "waiting_for_input"),
+            (["completed", "working"], "working"),
+            (["blocked_error", "waiting_for_input"], "blocked_error"),
+            (["completed", "idle_ready"], "completed"),
+            ([], "idle_ready"),
+        ):
+            with self.subTest(modes=modes):
+                self.assertEqual(combined_mode(Row("local", str(i), mode, None) for i, mode in enumerate(modes)), expected)
+
+    def test_duplicates_are_idempotent(self):
+        row = Row("local", "1", "working", None)
+        self.assertEqual(combined_mode([row]), combined_mode([row, row, row]))
+
+
+class PublishTest(unittest.TestCase):
+    def setUp(self):
+        self.clock = FakeClock()
+        self.sender = RecordingSender(short_tmpdir("tsp-pub-"))
+        self.sender.up("events.sock")
+        self.sender.up("relay-events.sock")
+        self.t = transport_with(self.sender, self.clock)
+
+    def test_rows_reduce_to_one_mode(self):
+        self.t.publish([
+            Row("local", "1", "working", "Work"),
+            Row("remote", "2", "waiting_for_input", "Question"),
+        ])
+        self.assertEqual(self.sender.sent, [], "publishing records the state without performing I/O")
+        self.t.tick()
+        self.assertEqual(self.sender.modes_for("events.sock"), ["waiting_for_input"])
+        self.assertEqual(self.sender.modes_for("relay-events.sock"), ["waiting_for_input"])
+        self.t.publish([Row("local", "1", "working", None)])
+        self.t.tick()
+        self.assertEqual(self.sender.modes_for("events.sock"), ["waiting_for_input", "working"])
+        self.t.publish([Row("local", "1", "working", None)], force=True)
+        self.t.tick()
+        self.assertEqual(self.sender.modes_for("events.sock"), ["waiting_for_input", "working", "working"])
+
+    def test_label_or_row_churn_without_mode_change_sends_nothing(self):
+        self.t.publish([Row("local", "1", "working", "Old")])
+        self.t.tick()
+        sent = list(self.sender.sent)
+        self.t.publish([Row("local", "1", "working", "Renamed")])
+        self.t.tick()
+        self.t.publish([
+            Row("remote", "2", "working", "Moved"),
+            Row("local", "3", "completed", "Done"),
+        ])
+        self.t.tick()
+        self.assertEqual(self.sender.sent, sent)
+
+    def test_empty_rows_send_neutral(self):
+        self.assertFalse(self.t.neutral_delivered())
+        self.t.publish([Row("local", "1", "working", "Work")])
+        self.t.tick()
+        self.assertFalse(self.t.neutral_delivered())
+        self.t.publish(())
+        self.t.tick()
+        self.assertTrue(self.t.neutral_delivered())
+        self.assertEqual(self.sender.modes_for("events.sock"), ["working", "idle_ready"])
+        self.assertEqual(self.sender.modes_for("relay-events.sock"), ["working", "idle_ready"])
+        self.assertEqual(self.t.delivery_summary(), {
+            "ui": {"mode": "idle_ready", "pending": False, "error": None},
+            "service": {"mode": "idle_ready", "pending": False, "error": None},
+        })
+
+    def test_undelivered_neutral_names(self):
+        self.sender.down("relay-events.sock")
+        self.sender.refuse.add("events.sock")
+        self.t.publish((), force=True)
+        self.t.tick()
+        self.assertEqual(self.t.undelivered_neutral(), ["ui"], "only a present receiver needs the startup neutral")
+        self.sender.refuse.clear()
+        self.sender.up("relay-events.sock")
+        self.t.tick(immediate=True)
+        self.assertEqual(self.t.undelivered_neutral(), [])
+        self.assertTrue(self.t.neutral_delivered())
+        self.t.publish([Row("local", "1", "working", None)])
+        self.t.tick()
+        self.assertCountEqual(self.t.undelivered_neutral(), ["ui", "service"])
+        self.sender.refuse.add("events.sock")
+        self.t.publish(())
+        self.t.tick()
+        self.assertEqual(self.t.undelivered_neutral(), ["ui"])
+        self.assertFalse(self.t.neutral_delivered())
 
 
 class DeliveryTest(unittest.TestCase):
