@@ -93,6 +93,7 @@ Each check reads `coordinator.log`, `bridge.py status`, and SidePulse's `status-
 | `time.monotonic()` on this macOS | `mach_absolute_time()`, which pauses during sleep; the coordinator compares wall and monotonic deltas on every request and tick, so either clock behaviour is handled |
 | Linked checkout with git's fsmonitor daemon | Every git command touched `.git/fsmonitor--daemon/cookies` and reloaded the window (a new generation each time); `git config --local core.fsmonitor false` in the checkout stops it; installed copies carry no `.git` |
 | Rename to the one name `tern-sidepulse` (plugin name, palette titles, toast titles, helper messages) | The linked checkout reloaded in place; `tern plugin list` reports `tern-sidepulse 0.1.0 tern-sidepulse … window ready`; `bridge.py doctor` kept its check ids and reports the renamed remedy strings; the coordinator (same pid, `VERSION 0.1.0`) needed no restart. The four palette titles were not re-exercised from the palette itself after the rename |
+| Sleep/wake (`pmset sleepnow` with three working sessions; asleep 78 s, 19:09:01–19:10:19 PST on battery) | First reaper tick after wake logged `clock discontinuity: wall +69.8s, monotonic +1.0s; leases uncertain` (so `mach_absolute_time()` paused for the whole sleep), marked the observer uncertain and sent `idle_ready` to both receivers at once (SidePulse: `Working` → `Idle`); the window's first post-wake snapshot 3.0 s later restored `working` on both receivers; same coordinator pid and generation, `expired_observers` stayed 0, `discontinuities` 1. An earlier attempt that woke 11 s after the sleep command froze the machine for only ~3 s (under the 5 s threshold) and correctly logged nothing |
 
 Automated suite ([`../README.md#development`](../README.md#development)): 111 unit and integration tests in total (`python3 -B -m unittest discover -s tests -t .`), verified on Python 3.13.18 and 3.15.2 locally and on Python 3.10 and 3.13 in CI. The 111 tests cover an end-to-end subprocess coordinator with fake receivers, hostile-client inputs (deep nesting, `NaN`/`Infinity`, non-printable observer keys, and symlinked, FIFO, or oversized `config.json`), the coherence of the README, `plugin.toml`, the palette commands, the rendered media and the site (`tests/test_site.py`), and include two conditional tests:
 
@@ -103,7 +104,6 @@ The window half's retry policy (backoff up to 30 s while the coordinator is unav
 
 Not exercised here, with the exact check still to run:
 
-- Sleep/wake: `pmset sleepnow` with a working session, then confirm the coordinator log shows `clock discontinuity` and the next snapshot restores `working`.
 - Full Tern quit and restart: quit Tern with a working session, confirm neutral within 20 s, relaunch, confirm `working` returns after the first snapshot.
 - Remote disconnect/reconnect: disconnect the remote host from the host dialog with a working remote session; the next reconciliation drops its contribution (`host_unavailable` in doctor); reconnect and confirm it returns.
 - The two-window close-one case with both windows showing OMP sessions (window 2 above showed none).
