@@ -21,7 +21,7 @@ body:
     id: privacy
     attributes:
       label: Privacy and security impact
-      description: Confirm how the change preserves the six-field agent read boundary, local-only sockets, and standard-library-only runtime.
+      description: Confirm how the change preserves the six-field agent read boundary (`pane`, `state`, `kind`, `program`, `host`, `alive`), in-memory-only OMP tab and pane labels, local-only sockets, and standard-library-only runtime (see `README.md#privacy-and-hardening`).
     validations:
       required: true
   - type: textarea
@@ -33,7 +33,7 @@ body:
     attributes:
       label: Scope checks
       options:
-        - label: This keeps the plugin within its read-only status boundary (never reading transcripts, prompts, or pane titles, and never mutating Tern windows).
+        - label: This keeps the plugin within its read-only status boundary (never reading transcripts, prompts, working directories, or model names, keeping OMP tab and pane labels in coordinator memory only, and never mutating Tern windows).
           required: true
         - label: I understand that the runtime and tests use the Python 3.10+ standard library only.
           required: true

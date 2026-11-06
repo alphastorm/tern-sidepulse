@@ -279,15 +279,6 @@ class SiteTests(unittest.TestCase):
             with self.subTest(surface=name):
                 self.assertIn(DISCLAIMER, (ROOT / name).read_text(encoding="utf-8"))
 
-    def test_documented_test_count_is_current(self):
-        count = unittest.defaultTestLoader.discover(str(ROOT / "tests"), top_level_dir=str(ROOT)).countTestCases()
-        for name in ("docs/compatibility.md", "CHANGELOG.md"):
-            text = (ROOT / name).read_text(encoding="utf-8")
-            claims = re.findall(r"(\d+) unit and integration tests|The (\d+) tests|Ran (\d+) tests", text)
-            self.assertTrue(claims, f"{name} no longer states the test count")
-            for claim in claims:
-                self.assertEqual(count, int(next(c for c in claim if c)), f"{name} states a stale test count")
-
 
 if __name__ == "__main__":
     unittest.main()

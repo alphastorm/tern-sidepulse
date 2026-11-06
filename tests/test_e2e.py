@@ -88,6 +88,29 @@ class EndToEndTest(unittest.TestCase):
         self.svc.start()
         self.assertTrue(self.svc.wait_for("working", timeout=4), "the returning service gets the current mode without waiting out the full backoff")
 
+    def test_max_size_labelled_snapshot_is_accepted(self):
+        code, reg, err = run_bridge(["register"], {}, self.env)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(reg["ok"], reg)
+        observations = [{"pane": i, "state": "working", "host": "local", "label": "é" * 128} for i in range(512)]
+        code, ack, err = run_bridge(["snapshot"], {
+            "epoch": reg["epoch"],
+            "generation": reg["generation"],
+            "seq": 1,
+            "coverage": "complete",
+            "observations": observations,
+        }, self.env, raw_utf8=True)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(ack["ok"], ack)
+        self.assertEqual(ack["rows"], {"working": 512})
+        self.assertTrue(self.ui.wait_for("working"))
+        self.assertTrue(self.svc.wait_for("working"))
+        code, out, err = run_bridge(["status"], None, self.env)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(out["status"]["rows_total"], 512)
+        self.assertEqual(out["status"]["rows_labelled"], 512)
+
     @unittest.skipUnless(os.environ.get("TERN_SIDEPULSE_SLOW_TESTS"), "set TERN_SIDEPULSE_SLOW_TESTS=1 for the default-limits timing check")
     def test_default_limits_neutral_within_20s(self):
         env = subprocess_env(self.tmp, self.ui.path, self.svc.path, None)
