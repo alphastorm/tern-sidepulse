@@ -13,7 +13,7 @@ Versions exercised on the development laptop (November 5, 2026):
 | Luau tooling | luau 0.745 (`luau-analyze`), luau-lsp 1.70.1 (`luau-lsp analyze --definitions=types/tern.d.luau`) | Development/CI checks only |
 | Remote host | A Mac Studio attached over Tern remoting, Tern 0.9.12 there too | No SidePulse, helper, or service on the remote host |
 
-`plugin.toml` has no minimum-API field. At load, `window.luau` probes `cx.agents:list`, `cx.hosts:list`, `cx.session:surface`, and `tern.process.run` under `pcall`; when any member is missing, the window stays inert and reports the missing member through the `SidePulse bridge: doctor` toast and `doctor.json`. `tern.timer` runs in the entry chunk itself, so a Tern build without `tern.timer` fails to load the plugin outright.
+`plugin.toml` has no minimum-API field. At load, `window.luau` probes `cx.agents:list`, `cx.hosts:list`, `cx.session:surface`, and `tern.process.run` under `pcall`; when any member is missing, the window stays inert and reports the missing member through the `tern-sidepulse: doctor` toast and `doctor.json`. `tern.timer` runs in the entry chunk itself, so a Tern build without `tern.timer` fails to load the plugin outright.
 
 ## Generated declarations vs. the inspected SDK
 
@@ -64,7 +64,7 @@ Driven through the installed package's `parse_log_line` and `LiveAgentMonitor` w
 | Sent (`hook_event_name`, `sidepulse_status`) | Resulting status | Note |
 | --- | --- | --- |
 | `UserPromptSubmit`, `working` | `working` | Also after `completed`, `blocked_error` and `waiting_for_input` |
-| `Stop`, `completed` | `completed` | Visible for 20 min by SidePulse's own default; the bridge sends idle after its 15 s notice |
+| `Stop`, `completed` | `completed` | Visible for 20 min by SidePulse's own default; the coordinator sends idle after its 15 s notice |
 | `PermissionRequest`, `waiting_for_input` | `waiting_for_input` | No `tool_name`/`tool_input`, so no pending-permission signature blocks later transitions |
 | `StopFailure`, `blocked_error` | `blocked_error` | |
 | `Interrupt`, any | `idle_ready` | `Interrupt` ignores `sidepulse_status`; idle statuses are stale immediately (`idle_visible_seconds = 0`), which is the neutral cleanup |
@@ -74,7 +74,7 @@ Driven through the installed package's `parse_log_line` and `LiveAgentMonitor` w
 | `agent_id` present | status key becomes `omp:agent:<id>` | Omitted so it can never supersede the session identity |
 | Older `logged_at` than the current status | still replaces | The collector keeps no ordering; the coordinator serializes sends |
 
-Two receivers run on this laptop: the menu-bar app (`io.sidepulse.agentstatus`) on `~/.local/state/sidepulse/agent-monitor/events.sock` and the headless service (`io.sidepulse.service`) on `relay-events.sock` in the same directory. Upstream SidePulse falls back to `/tmp/sidepulse-relay-<uid>-<hash>.sock` when the `relay-events.sock` path exceeds 96 bytes, and the bridge mirrors that fallback. Each receiver keeps its own `LiveAgentMonitor`, so the coordinator sends every event to both families. For read-only inspection, the menu-bar app writes `~/.local/state/sidepulse/agent-monitor/status-history.jsonl` (`agent_status` and `display_status`) on refresh, and whichever receiver ingested last writes `~/.local/state/sidepulse/agent-monitor/latest.json`. A SidePulse Pro USB LED device (`/Volumes/SidePulse`, display mode `agent`) is attached for physical LED checks, which are reported separately from socket delivery.
+Two receivers run on this laptop: the menu-bar app (`io.sidepulse.agentstatus`) on `~/.local/state/sidepulse/agent-monitor/events.sock` and the headless service (`io.sidepulse.service`) on `relay-events.sock` in the same directory. Upstream SidePulse falls back to `/tmp/sidepulse-relay-<uid>-<hash>.sock` when the `relay-events.sock` path exceeds 96 bytes, and the coordinator mirrors that fallback. Each receiver keeps its own `LiveAgentMonitor`, so the coordinator sends every event to both families. For read-only inspection, the menu-bar app writes `~/.local/state/sidepulse/agent-monitor/status-history.jsonl` (`agent_status` and `display_status`) on refresh, and whichever receiver ingested last writes `~/.local/state/sidepulse/agent-monitor/latest.json`. A SidePulse Pro USB LED device (`/Volumes/SidePulse`, display mode `agent`) is attached for physical LED checks, which are reported separately from socket delivery.
 
 ## Integration checks on the laptop (real Tern, real SidePulse, linked plugin)
 
@@ -84,7 +84,7 @@ Each check reads `coordinator.log`, `bridge.py status`, and SidePulse's `status-
 | --- | --- |
 | Install/reload with three existing local OMP sessions | Discovered on the first snapshot (~60 ms after load); SidePulse's aggregate went `completed` (two other agents) → `working` the same second; no session restarted |
 | Coordinator survival | pid stayed the same across the double window reload after `tern plugin link`, across every edit-triggered reload during development, and runs under launchd in its own session/process group |
-| Plugin unlinked while a session was working | Last snapshot 22:47:18 → lease expiry and `Interrupt`/`idle_ready` at 22:47:33 (15 s) → coordinator exit 5 s later; SidePulse fell back to the other agents' `completed`, so only the bridge's record was withdrawn |
+| Plugin unlinked while a session was working | Last snapshot 22:47:18 → lease expiry and `Interrupt`/`idle_ready` at 22:47:33 (15 s) → coordinator exit 5 s later; SidePulse fell back to the other agents' `completed`, so only the coordinator's record was withdrawn |
 | Failed turn (401) in a disposable session while another session worked | `blocked_error` 3.4 s after the session was launched (the request itself takes ~2.4 s), held exactly 30.0 s, then `working` again |
 | OMP `ask` in a disposable session | `waiting_for_input` outranked `working`; a daemon-side `tern close` (no window event) was reconciled back to `working` within 2 s |
 | Remote OMP on the attached Mac Studio | Observed as `host = 1`; its `ask` produced `waiting_for_input`, its close returned the aggregate to `working` |

@@ -41,7 +41,7 @@ To pin a release, check out its tag and run `tern plugin install /path/to/checko
 ## Confirm it works
 
 1. Wait about 5 s after installing or linking so the window registers and picks up any existing OMP sessions (nothing needs restarting).
-2. Open the Tern command palette and run `SidePulse bridge: doctor`. Expect a toast starting with `ok:` (`ok: 0 issue(s); socket delivery is not an LED check`). A toast starting with `warn:` names a check that needs attention, such as one SidePulse receiver not running or no snapshot yet; `~/.local/state/tern-sidepulse/doctor.json` lists each check and its remedy.
+2. Open the Tern command palette and run `tern-sidepulse: doctor`. Expect a toast starting with `ok:` (`ok: 0 issue(s); socket delivery is not an LED check`). A toast starting with `warn:` names a check that needs attention, such as one SidePulse receiver not running or no snapshot yet; `~/.local/state/tern-sidepulse/doctor.json` lists each check and its remedy.
 3. Check SidePulse's menu-bar app (or `~/.local/state/sidepulse/agent-monitor/latest.json` when running headless): while an OMP session works or waits, one session from origin `Tern` (`OMP in Tern`) appears.
 
 ## Commands
@@ -50,10 +50,10 @@ From the Tern command palette:
 
 | Command | Does |
 | --- | --- |
-| `SidePulse bridge: doctor` | Checks Python, the data and runtime directories, the coordinator, this window, and each SidePulse receiver; shows a one-line toast and writes `~/.local/state/tern-sidepulse/doctor.json` |
-| `SidePulse bridge: resync` | Re-registers this window and resends the current state to SidePulse |
-| `SidePulse bridge: disable` | Persists the `disabled` latch file, drops every registered window, and clears this plugin's status on SidePulse |
-| `SidePulse bridge: enable` | Removes the `disabled` latch file; this window registers right away and other open windows on their next 5 s cycle |
+| `tern-sidepulse: doctor` | Checks Python, the data and runtime directories, the coordinator, this window, and each SidePulse receiver; shows a one-line toast and writes `~/.local/state/tern-sidepulse/doctor.json` |
+| `tern-sidepulse: resync` | Re-registers this window and resends the current state to SidePulse |
+| `tern-sidepulse: disable` | Persists the `disabled` latch file, drops every registered window, and clears this plugin's status on SidePulse |
+| `tern-sidepulse: enable` | Removes the `disabled` latch file; this window registers right away and other open windows on their next 5 s cycle |
 
 The same operations, plus `status`, from a shell in the plugin directory with Python 3.10 or later:
 
@@ -112,10 +112,10 @@ The plugin reads only `pane`, `state`, `kind`, `program`, `host`, and `alive` fr
 
 ## Uninstall
 
-1. Run **SidePulse bridge: disable** from the Tern palette (or `python3 bridge.py disable --data-dir "$HOME/Library/Application Support/Tern/plugin-data/tern-sidepulse"`). This persists the `disabled` latch, drops every registered window, and clears the plugin's status on SidePulse so a late helper cannot restore an old state.
+1. Run **tern-sidepulse: disable** from the Tern palette (or `python3 bridge.py disable --data-dir "$HOME/Library/Application Support/Tern/plugin-data/tern-sidepulse"`). This persists the `disabled` latch, drops every registered window, and clears the plugin's status on SidePulse so a late helper cannot restore an old state.
 2. Unlink or remove the plugin: `tern plugin unlink tern-sidepulse` for a development link, or `tern plugin remove tern-sidepulse` for an installed copy.
 3. Wait for the coordinator to drain and exit on its own: about 5 s after the clear event is delivered, or at most 60 s if SidePulse is unreachable (`pgrep -f "bridge.py coordinator"` checks whether it is still running).
-4. Tern keeps the plugin data directory (`$HOME/Library/Application Support/Tern/plugin-data/tern-sidepulse`, containing `identity.json`, `disabled`, and `pycache/`), so a later reinstall starts disabled until you run **SidePulse bridge: enable**. For a clean slate, delete `~/.local/state/tern-sidepulse` (or the fallback runtime path reported by `doctor`) and the plugin data directory after step 3 completes.
+4. Tern keeps the plugin data directory (`$HOME/Library/Application Support/Tern/plugin-data/tern-sidepulse`, containing `identity.json`, `disabled`, and `pycache/`), so a later reinstall starts disabled until you run **tern-sidepulse: enable**. For a clean slate, delete `~/.local/state/tern-sidepulse` (or the fallback runtime path reported by `doctor`) and the plugin data directory after step 3 completes.
 
 ## Known limitations
 
