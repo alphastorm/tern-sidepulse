@@ -1,0 +1,78 @@
+{
+  "outputs": {
+    "tern-sidepulse-demo-poster.png": {
+      "bytes": 201516,
+      "height": 1080,
+      "sha256": "a9e87a8a62755bea569cfbd39d00017ba342c4c36f2c8e4c7b48d0d450a168e3",
+      "width": 1920
+    },
+    "tern-sidepulse-demo.gif": {
+      "bytes": 677160,
+      "height": 540,
+      "sha256": "5f83ff0727f240596a53aaeb5b4eb16222b21957e56e7e2cb5fd6f0575f1dea4",
+      "width": 960
+    },
+    "tern-sidepulse-demo.mp4": {
+      "bytes": 295834,
+      "height": 1080,
+      "sha256": "861e388aa78b5a87f771ae80f687a1a626dc3cc90bb9c69693c9fcfb253431c4",
+      "width": 1920
+    }
+  },
+  "params": {
+    "canvas": [
+      960,
+      540
+    ],
+    "color_profile": "srgb",
+    "device_scale_factor": 2,
+    "duration_s": 16.0,
+    "fps": 20,
+    "frame_time": "i / FPS",
+    "frames": 320,
+    "gif": {
+      "bayer_scale": 3,
+      "bitexact": true,
+      "diff_mode": "rectangle",
+      "dither": "bayer",
+      "filtergraph": "fps=10,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];[b][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle",
+      "fps": 10,
+      "frames": 160,
+      "gifsicle_keep_empty": true,
+      "gifsicle_o3": true,
+      "loop": 0,
+      "max_colors": 256,
+      "stats_mode": "full",
+      "width": 960
+    },
+    "mp4": {
+      "audio": false,
+      "bitexact": true,
+      "codec": "libx264",
+      "crf": 20,
+      "faststart": true,
+      "fps": 20,
+      "map_metadata": -1,
+      "pixel_format": "yuv420p",
+      "preset": "slow",
+      "tune": "animation"
+    },
+    "poster_t": 5.6,
+    "virtual_time_budget_ms": 5000
+  },
+  "schema": 1,
+  "source": {
+    "files": [
+      "assets/brand.css",
+      "assets/demo.html",
+      "assets/logo.svg"
+    ],
+    "sha256": "0c9a4fba590e2450a01c8a17285e566c6e8dc7fb2343ed1d97eccc688096ab42"
+  },
+  "tools": {
+    "chrome": "Google Chrome 156.0.8078.80",
+    "ffmpeg": "ffmpeg version 9.0-https://www.martin-riedl.de Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 9.0.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "gifsicle": "LCDF Gifsicle 1.98"
+  }
+}
