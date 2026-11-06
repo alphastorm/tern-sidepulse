@@ -2,9 +2,8 @@ import json
 import time
 import unittest
 
-from tests.helpers import FakeReceiver, RecordingSender, short_tmpdir
+from tests.helpers import FakeClock, FakeReceiver, RecordingSender, short_tmpdir
 
-from tern_sidepulse.clock import FakeClock
 from tern_sidepulse.transport import SidePulseTransport, build_line, encode_event
 
 

@@ -13,7 +13,7 @@ Versions actually exercised on the development laptop (November 5, 2026):
 | Luau tooling | luau 0.745 (`luau-analyze`), luau-lsp 1.70.1 (`luau-lsp analyze --definitions=types/tern.d.luau`) | Development/CI checks only |
 | Remote host | A Mac Studio attached over Tern remoting, Tern 0.9.12 there too | No SidePulse, helper, or service on the remote host |
 
-The manifest has no minimum-API field; the plugin checks the members it needs at load (`cx.agents`, `cx.hosts`, `cx.session:surface`, `tern.process.run`, `tern.timer`) and reports missing ones through doctor instead of assuming a version.
+The manifest has no minimum-API field; the plugin probes the members it needs at load (`cx.agents:list`, `cx.hosts:list`, `cx.session:surface`, `tern.process.run`, each under `pcall`) and, when one is missing, stays inert and reports the reason through the doctor toast and `doctor.json` instead of assuming a version. `tern.timer` is used by the entry chunk itself, so a build without it fails to load the plugin outright.
 
 ## Generated declarations vs. the inspected SDK
 
@@ -25,7 +25,7 @@ The manifest has no minimum-API field; the plugin checks the members it needs at
 - Events `agent_state({pane, old?, new})`, `agent_finished({pane, result})` with `result` in `done | failed | exited | closed`, `pane_closed`, `session_ended`, `window_start`, `budget`.
 - `tern.process.run(argv, {stdin, env, timeout_ms}, cb)`, `tern.timer`, `tern.kv`, `tern.fs`, `tern.plugin.data`, `cx:window_key()`.
 
-Observed but undocumented: every `cx.agents:list()` row also carries `host` (the host id from `cx.hosts:list()`), `program` (`"omp"`), `kind` (`"agent"`), `alive`, `session`, `tab`, `busy`, `at_prompt`, `alert`, `title`, `running`, `last` and, while working, `progress = {percent, state}`. The plugin reads `host`, `program`, `kind` and `alive` when present and falls back to the documented fields when absent, so it keeps working if the extra keys disappear.
+Observed but undocumented: every `cx.agents:list()` row also carries `host` (the host id from `cx.hosts:list()`), `program` (`"omp"`), `kind` (`"agent"`), `alive`, `session`, `tab`, `busy`, `at_prompt`, `alert`, `title`, `running`, `last` and, while working, `progress = {percent, state}`. The plugin reads `host` and `alive` when present and falls back to the documented fields when absent; `kind` and `program` are counted in diagnostics only and never decide classification, so a Tern that reports other values (say the native pane kind) cannot make sessions disappear.
 
 ## Contract probe results
 
@@ -51,9 +51,10 @@ A throwaway window plugin recorded projections of the rows (never the rows thems
 
 Consequences built into the plugin:
 
-- Classification is `kind == "agent"` plus a current surface with `role == "omp.session"`; a missing surface (OMP still starting) is re-checked on the next reconciliation. `program` is diagnostics only: `tern new tab -- env … omp` reports `program = "env"`, so a program-name rule would wrongly exclude wrapped launches. Titles, cwd and missing `command` are never evidence.
-- A 5 s reconciliation timer re-enumerates everything because daemon-side closes are silent in the window.
-- Observer identity is `(parent pid of the helper, TERN_WINDOW_KEY)`; pane ids are opaque within that observer.
+- Classification is the current surface's `role == "omp.session"`, nothing else; a missing surface (OMP still starting) is re-checked on the next reconciliation. `program` and `kind` are diagnostics only: `tern new tab -- env … omp` reports `program = "env"`, so a program-name rule would wrongly exclude wrapped launches. Titles, cwd and missing `command` are never evidence.
+- A 5 s reconciliation timer re-enumerates everything because daemon-side closes are silent in the window. Against the 15 s lease that tolerates one failed helper call; two consecutive failures expire the window and it registers again on the next call (about 150 ms of withdrawn contribution).
+- Observer identity is `(parent pid of the helper, TERN_WINDOW_KEY)`; pane ids are opaque within that observer. A helper whose parent pid changes on every call (a forking shim configured as `python`) is fenced on every snapshot; after three fences in a row the window backs off exponentially to 30 s instead of re-registering continuously, and doctor names the cause.
+- An interpreter that answers `python_too_old` (exit status 3 with a JSON body) is rejected for the life of the VM and the next candidate is tried; `/usr/bin/python3` is only ever a candidate when the Command Line Tools provide it.
 
 ## SidePulse contract (verified against the installed collector)
 
@@ -91,7 +92,7 @@ Each check reads the coordinator log, `bridge.py status`, and SidePulse's own `s
 | `time.monotonic()` on this macOS | `mach_absolute_time()`, which pauses during sleep; the coordinator compares wall and monotonic deltas on every request and tick, so either clock behaviour is handled |
 | Linked checkout with git's fsmonitor daemon | Every git command touched `.git/fsmonitor--daemon/cookies` and reloaded the window (a new generation each time); `git config --local core.fsmonitor false` in the checkout stops it; installed copies carry no `.git` |
 
-Automated: 86 unit/integration tests (`python3 -m unittest discover -s tests -t .`) on Python 3.11, 3.13 and 3.15, including an end-to-end subprocess coordinator with fake receivers; the optional contract test against the installed SidePulse normalizer; the slow default-limits test (neutral 15 s after the last snapshot, inside the 20 s target).
+Automated: 93 unit/integration tests (`python3 -B -m unittest discover -s tests -t .`) on Python 3.13 and 3.15 locally, 3.10 and 3.13 in CI, including an end-to-end subprocess coordinator with fake receivers, hostile-client cases (deep nesting, non-finite numbers, unprintable observer keys, symlinked or FIFO `config.json`), the optional contract test against the installed SidePulse normalizer, and the slow default-limits test (neutral 15 s after the last snapshot, inside the 20 s target). The window half's retry policy (backoff to 30 s while the coordinator is unavailable or every snapshot is fenced, replacement of a too-old interpreter, recovery logged at warn) was exercised with a throwaway `luau` harness driving `window.luau` against a fake `tern`.
 
 Not exercised here, with the exact check still to run:
 

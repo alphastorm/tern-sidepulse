@@ -25,7 +25,7 @@ def _check(checks: list, id_: str, level: str, detail: str, remedy: str | None =
     checks.append(item)
 
 
-def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: str | None = None) -> dict:
+def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: str | None = None, inert: str | None = None) -> dict:
     checks: list[dict] = []
     _check(checks, "python", "ok" if sys.version_info >= (3, 10) else "error", f"{sys.executable} {sys.version.split()[0]}")
     _check(checks, "bridge", "ok", f"{PLUGIN_ID} {VERSION}, protocol schema {PROTOCOL_SCHEMA}, {settings.bridge_path}")
@@ -50,7 +50,7 @@ def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: 
         else:
             _check(checks, "identity", "ok", f"session {session_id_for(identity)[:24]}…")
         if is_disabled(data_dir):
-            _check(checks, "latch", "warn", "bridge disabled", "run the SidePulse: Enable command")
+            _check(checks, "latch", "warn", "bridge disabled", "run the SidePulse bridge: enable command")
         else:
             _check(checks, "latch", "ok", "enabled")
 
@@ -99,6 +99,8 @@ def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: 
         _check(checks, "sidepulse_state", "ok" if directory.is_dir() else "warn", str(directory), None if directory.is_dir() else "install SidePulse's agent monitor")
         break
 
+    if inert is not None and inert.isprintable() and len(inert) <= 120:
+        _check(checks, "window", "error", f"observer inert: {inert}", "this Tern build lacks a window API the plugin needs")
     diag = parse_diag(window_diag)
     if diag:
         _check(checks, "window", "ok", ", ".join(f"{key}={value}" for key, value in sorted(diag.items())))

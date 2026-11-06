@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import json
 import os
-import uuid
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .paths import CONFIG_NAME, DISABLED_NAME, IDENTITY_NAME, LOG_NAME, PLUGIN_ID
 
 MAX_LOG_BYTES = 1024 * 1024
+MAX_CONFIG_BYTES = 65536  # the window half reads it with the same cap
 SESSION_PREFIX = f"{PLUGIN_ID}:"
 
 
@@ -39,6 +40,8 @@ def load_identity(data_dir: Path, create: bool = True) -> dict | None:
             return None
     if not create:
         return None
+    import uuid  # only the first coordinator start ever pays for this import
+
     data_dir.mkdir(parents=True, exist_ok=True)
     data = {
         "install_id": str(uuid.uuid4()),
@@ -54,16 +57,26 @@ def session_id_for(identity: dict) -> str:
 
 
 def load_config(data_dir: Path) -> dict:
+    """``config.json`` as the window half sees it: a regular, non-symlink file of at most 64 KiB, else empty."""
     try:
-        data = json.loads((data_dir / CONFIG_NAME).read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (FileNotFoundError, OSError, ValueError):
+        fd = os.open(data_dir / CONFIG_NAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
         return {}
-
-
-def save_config(data_dir: Path, config: dict) -> None:
-    data_dir.mkdir(parents=True, exist_ok=True)
-    _write_atomic(data_dir / CONFIG_NAME, json.dumps(config, indent=2, sort_keys=True) + "\n", mode=0o644)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return {}
+        raw = os.read(fd, MAX_CONFIG_BYTES + 1)
+    except OSError:
+        return {}
+    finally:
+        os.close(fd)
+    if len(raw) > MAX_CONFIG_BYTES:
+        return {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def is_disabled(data_dir: Path) -> bool:
@@ -91,7 +104,7 @@ class BoundedLog:
         self._handle = self._open()
 
     def _open(self):
-        handle = open(self.path, "a", encoding="utf-8")
+        handle = open(self.path, "a", encoding="utf-8", errors="backslashreplace")
         os.chmod(self.path, 0o600)
         self._size = handle.tell()
         return handle
@@ -107,7 +120,7 @@ class BoundedLog:
             self._handle.write(line)
             self._handle.flush()
             self._size += len(line.encode("utf-8"))
-        except OSError:
+        except (OSError, ValueError):  # ValueError: a rotation that failed left the handle closed
             pass
 
     def close(self) -> None:

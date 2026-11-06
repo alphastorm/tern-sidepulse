@@ -1,16 +1,16 @@
 import json
 import socket
 import subprocess
-import sys
 import threading
 import time
 import unittest
 from pathlib import Path
 
-from tests.helpers import BRIDGE, FakeReceiver, RecordingSender, short_tmpdir, subprocess_env
+from tests.helpers import FakeReceiver, RecordingSender, helper_argv, short_tmpdir, subprocess_env
 
 from tern_sidepulse.clock import Clock
-from tern_sidepulse.coordinator import Coordinator, Limits
+from tern_sidepulse.coordinator import Coordinator
+from tern_sidepulse.limits import Limits
 from tern_sidepulse.server import MAX_CONNECTIONS, Server, acquire_lock
 from tern_sidepulse.transport import SidePulseTransport
 
@@ -54,6 +54,7 @@ class ServerFixture:
                 if not chunk:
                     break
                 out += chunk
+        client.close()
         return out
 
     def call(self, request: dict) -> dict:
@@ -79,6 +80,14 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(json.loads(self.fx.raw(big))["error"], "oversized")
         self.assertEqual(self.fx.call({"schema": 1, "op": "frobnicate"})["error"], "unknown_op")
         self.assertTrue(self.fx.call({"schema": 1, "op": "status"})["ok"])
+
+    def test_deep_nesting_and_non_finite_numbers_never_unwind_the_loop(self):
+        deep = b"[" * 2000 + b"]" * 2000  # under max_request_bytes; a RecursionError on older interpreters
+        answer = json.loads(self.fx.raw(deep))
+        self.assertIn(answer["error"], ("malformed_json", "bad_request"))
+        self.assertEqual(json.loads(self.fx.raw(b'{"schema": 1, "op": "status", "x": NaN}'))["error"], "malformed_json")
+        self.assertTrue(self.fx.call({"schema": 1, "op": "status"})["ok"], "the coordinator is still serving")
+        self.assertTrue(self.fx.thread.is_alive())
 
     def test_partial_sender_is_dropped_without_starving_the_reaper(self):
         reg = self.fx.call({"schema": 1, "op": "register", "observer": {"parent_pid": 1, "window_key": ""}})
@@ -127,7 +136,7 @@ class SingletonTest(unittest.TestCase):
         ui.start()
         svc.start()
         env = subprocess_env(tmp, ui.path, svc.path, {"lease": 2, "reaper": 0.2, "exit_grace": 1, "final_grace": 5})
-        argv = [sys.executable, "-I", "-B", str(BRIDGE), "coordinator", "--runtime-dir", env["TERN_SIDEPULSE_RUNTIME_DIR"], "--data-dir", env["TERN_PLUGIN_DATA"], "--ui-socket", str(ui.path), "--service-socket", str(svc.path), "--limits", env["TERN_SIDEPULSE_LIMITS"]]
+        argv = [*helper_argv(env), "coordinator", "--runtime-dir", env["TERN_SIDEPULSE_RUNTIME_DIR"], "--data-dir", env["TERN_PLUGIN_DATA"], "--ui-socket", str(ui.path), "--service-socket", str(svc.path), "--limits", env["TERN_SIDEPULSE_LIMITS"]]
         procs = [subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for _ in range(2)]
         try:
             deadline = time.monotonic() + 10

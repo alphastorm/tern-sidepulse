@@ -2,7 +2,7 @@ import unittest
 
 from tests.helpers import activate, advance, idle, make_coordinator, register, snapshot, waiting
 
-from tern_sidepulse.coordinator import Limits
+from tern_sidepulse.limits import Limits
 
 
 class NoticeTest(unittest.TestCase):

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,11 +70,13 @@ def encode_event(line: dict) -> bytes:
 
 
 def send_payload(target: Path, payload: bytes, timeout: float = SEND_TIMEOUT_SECONDS) -> None:
-    """One attempt at one socket; raises OSError on failure."""
+    """One attempt at one socket within ``timeout`` overall (connect and send share it); raises OSError on failure."""
+    deadline = time.monotonic() + timeout
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     client.settimeout(timeout)
     try:
         client.connect(str(target))
+        client.settimeout(max(0.01, deadline - time.monotonic()))
         client.sendall(payload)
         try:
             client.shutdown(socket.SHUT_WR)

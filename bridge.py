@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Entry point for the tern-sidepulse helper. Runs with ``python3 -I -B bridge.py <command>``.
+"""Entry point for the tern-sidepulse helper. Runs with ``python3 -I -S -X pycache_prefix=<data>/pycache bridge.py <command>``.
 
 Kept parseable by old interpreters so the version guard below can answer with JSON instead of
 a SyntaxError.

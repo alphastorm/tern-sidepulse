@@ -107,13 +107,13 @@ class CliTest(unittest.TestCase):
         self.assertTrue(Path(doc["report"]).exists())
 
     def test_version_mismatch_stops_old_coordinator(self):
-        from tern_sidepulse.cli import build_parser, resolve_settings
+        from tern_sidepulse.cli import parse_args, resolve_settings
         from tern_sidepulse.client import request
 
         _, reg, _ = run_bridge(["register"], {}, self.env)
         pid = reg["coordinator_pid"]
         # Simulate a plugin update: a helper from newer code registers with its own version.
-        settings = resolve_settings(build_parser().parse_args(["register", "--runtime-dir", self.env["TERN_SIDEPULSE_RUNTIME_DIR"]]), BRIDGE)
+        settings = resolve_settings(parse_args(["register", "--runtime-dir", self.env["TERN_SIDEPULSE_RUNTIME_DIR"]]), BRIDGE)
         out = request(settings, {"schema": 1, "op": "register", "observer": {"parent_pid": 1, "window_key": ""}, "client_version": "9.9.9"}, spawn=False)
         self.assertEqual(out["error"], "version_mismatch")
         deadline = time.monotonic() + 5
@@ -131,6 +131,40 @@ class CliTest(unittest.TestCase):
         code, out, _ = run_bridge(["status", "--runtime-dir", str(other)], None, self.env)
         self.assertEqual(out["detail"], "not_running")
         self.assertTrue(other.exists())
+
+    def test_parser_grammar_matches_the_window_and_the_spawner(self):
+        from tern_sidepulse.cli import UsageError, parse_args
+
+        args = parse_args(["coordinator", "--runtime-dir", "/r", "--data-dir", "/d", "--ui-socket", "/a", "--ui-socket", "/b", "--limits", "{}"])
+        self.assertEqual((args.command, args.runtime_dir, args.data_dir, args.ui_socket, args.service_socket, args.limits), ("coordinator", "/r", "/d", ["/a", "/b"], [], "{}"))
+        for argv in ([], ["--data-dir", "/d"], ["status", "--data-dir"], ["status", "--help"], ["status", "extra"]):
+            with self.assertRaises(UsageError, msg=argv):
+                parse_args(argv)
+        code, out, _ = run_bridge(["status", "--nope", "x"], None, self.env)
+        self.assertEqual((code, out["error"]), (2, "usage"))
+
+    def test_config_must_be_a_small_regular_file(self):
+        from tern_sidepulse.storage import load_config
+
+        data = Path(self.env["TERN_PLUGIN_DATA"])
+        data.mkdir(parents=True, exist_ok=True)
+        real = data / "real.json"
+        real.write_text('{"ui_sockets": ["/elsewhere/events.sock"]}')
+        (data / "config.json").symlink_to(real)
+        self.assertEqual(load_config(data), {}, "a symlinked config is ignored, as the window half ignores it")
+        (data / "config.json").unlink()
+        os.mkfifo(data / "config.json")
+        self.assertEqual(load_config(data), {}, "a FIFO never blocks the helper")
+        (data / "config.json").unlink()
+        (data / "config.json").write_text('{"ui_sockets": ["' + "/" + "x" * 70000 + '"]}')
+        self.assertEqual(load_config(data), {}, "over 64 KiB is ignored")
+        (data / "config.json").write_text('{"ui_sockets": ["/elsewhere/events.sock"]}')
+        self.assertEqual(load_config(data), {"ui_sockets": ["/elsewhere/events.sock"]})
+
+    def test_helper_caches_bytecode_under_the_data_dir(self):
+        run_bridge(["status"], None, self.env)
+        cache = Path(self.env["TERN_PLUGIN_DATA"]) / "pycache"
+        self.assertTrue(any(cache.rglob("cli*.pyc")), "later helper runs skip compiling the package; the plugin dir stays untouched")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ import unittest
 
 from tests.helpers import activate, advance, idle, make_coordinator, register, snapshot, working
 
-from tern_sidepulse.coordinator import Limits
+from tern_sidepulse.limits import Limits
 
 
 class LeaseTest(unittest.TestCase):

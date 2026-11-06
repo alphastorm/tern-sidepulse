@@ -8,12 +8,12 @@ import os
 import selectors
 import signal
 import socket
-import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from .coordinator import Coordinator, Limits, ProtocolError, decode_request
+from .coordinator import Coordinator, ProtocolError, crash_site, decode_request
+from .limits import Limits
 from .paths import LOCK_NAME, SOCKET_NAME, ensure_private_dir
 
 RESPONSE_TIMEOUT = 0.5
@@ -39,25 +39,6 @@ def acquire_lock(runtime: Path) -> int:
     return fd
 
 
-def lock_holder_pid(runtime: Path) -> int | None:
-    """The pid written by the live lock holder, or None when nobody holds the lock."""
-    path = runtime / LOCK_NAME
-    try:
-        fd = os.open(path, os.O_RDWR)
-    except OSError:
-        return None
-    try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            text = os.read(fd, 32).decode("ascii", "replace").strip()
-            return int(text) if text.isdigit() else -1
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        return None
-    finally:
-        os.close(fd)
-
-
 def bind_socket(runtime: Path) -> socket.socket:
     """Bind under a temporary name, then rename over the canonical path (the lock proves any old file is stale)."""
     path = runtime / SOCKET_NAME
@@ -69,8 +50,8 @@ def bind_socket(runtime: Path) -> socket.socket:
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(str(temp))
     os.chmod(temp, 0o600)
+    server.listen(16)  # before the rename: a client never sees a published socket that refuses
     os.replace(temp, path)
-    server.listen(16)
     server.setblocking(False)
     return server
 
@@ -85,7 +66,6 @@ class Connection:
 class Server:
     def __init__(self, coordinator: Coordinator, runtime: Path, limits: Limits, log: Callable[[str], None], lock_fd: int) -> None:
         self.coordinator = coordinator
-        self.runtime = runtime
         self.limits = limits
         self.log = log
         self.lock_fd = lock_fd
@@ -114,13 +94,22 @@ class Server:
                 for key, _mask in self.selector.select(timeout):
                     if key.fileobj is self.server:
                         self.accept()
-                    else:
-                        conn = self.connections.get(key.fileobj)  # type: ignore[arg-type]
-                        if conn is not None:
-                            self.read(conn)
+                        continue
+                    conn = self.connections.get(key.fileobj)  # type: ignore[arg-type]
+                    if conn is None:
+                        continue
+                    try:
+                        self.read(conn)
+                    except Exception as exc:  # noqa: BLE001 - one client must never unwind the loop
+                        self.coordinator.counters["internal_errors"] += 1
+                        self.log(f"dropped a client after {type(exc).__name__} at {crash_site(exc)}")
+                        self.drop(conn)
                 self.reap_connections()
                 if self.coordinator.tick() == "exit":
                     break
+        except BaseException:
+            self.coordinator.request_stop("crash")
+            raise
         finally:
             self.close()
         return 0
@@ -221,6 +210,7 @@ def run_coordinator(
     from .storage import BoundedLog, is_disabled, load_identity, session_id_for, set_disabled
     from .transport import SidePulseTransport
 
+    os.umask(0o077)  # every file this process creates is private from the start
     ensure_private_dir(runtime)
     try:
         lock_fd = acquire_lock(runtime)
@@ -248,9 +238,7 @@ def run_coordinator(
             coordinator.request_stop("signal")
         return server.run()
     except Exception as exc:  # noqa: BLE001 - log the crash site, never a payload
-        frame = traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ else None
-        where = f"{os.path.basename(frame.filename)}:{frame.lineno}" if frame else "?"
-        log(f"coordinator crashed: {type(exc).__name__} at {where}")
+        log(f"coordinator crashed: {type(exc).__name__} at {crash_site(exc)}")
         raise
     finally:
         log.close()

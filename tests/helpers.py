@@ -17,11 +17,29 @@ ROOT = Path(__file__).resolve().parent.parent
 BRIDGE = ROOT / "bridge.py"
 sys.path.insert(0, str(ROOT))
 
-from tern_sidepulse.clock import FakeClock  # noqa: E402
-from tern_sidepulse.coordinator import Coordinator, Limits  # noqa: E402
+from tern_sidepulse.clock import Clock  # noqa: E402
+from tern_sidepulse.coordinator import Coordinator  # noqa: E402
+from tern_sidepulse.limits import Limits  # noqa: E402
+from tern_sidepulse.paths import python_flags  # noqa: E402
 from tern_sidepulse.transport import SidePulseTransport  # noqa: E402
 
 SENTINEL = "SENTINEL-7f3a-never-leaks"
+
+
+class FakeClock(Clock):
+    def __init__(self, monotonic: float = 1000.0, wall: float = 1_800_000_000.0) -> None:
+        self._monotonic = monotonic
+        self._wall = wall
+
+    def monotonic(self) -> float:
+        return self._monotonic
+
+    def wall(self) -> float:
+        return self._wall
+
+    def advance(self, seconds: float, wall_seconds: float | None = None) -> None:
+        self._monotonic += seconds
+        self._wall += seconds if wall_seconds is None else wall_seconds
 
 
 def short_tmpdir(prefix: str = "tsp-") -> Path:
@@ -237,10 +255,16 @@ def waiting(pane: int) -> dict:
     return {"pane": pane, "state": "waiting_input"}
 
 
+def helper_argv(env: dict) -> list[str]:
+    """The interpreter invocation the window half uses, bytecode cached under the test data dir."""
+    data = env.get("TERN_PLUGIN_DATA")
+    return [sys.executable, *python_flags(Path(data) if data else None), str(BRIDGE)]
+
+
 def run_bridge(args: list[str], stdin: dict | None, env: dict, timeout: float = 15.0) -> tuple[int, dict, str]:
     """Run bridge.py in a subprocess; returns (code, parsed stdout, stderr). Non-JSON output becomes an error dict."""
     proc = subprocess.run(
-        [sys.executable, "-I", "-B", str(BRIDGE), *args],
+        [*helper_argv(env), *args],
         input=json.dumps(stdin or {}).encode("utf-8"),
         capture_output=True,
         env=env,
@@ -265,7 +289,6 @@ def subprocess_env(tmp: Path, ui: Path, service: Path, limits: dict | None = Non
             "TERN_SIDEPULSE_RUNTIME_DIR": str(tmp / "rt"),
             "TERN_SIDEPULSE_UI_SOCKETS": str(ui),
             "TERN_SIDEPULSE_SERVICE_SOCKETS": str(service),
-            "PYTHONDONTWRITEBYTECODE": "1",
         }
     )
     if limits:

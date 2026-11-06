@@ -3,16 +3,14 @@ from __future__ import annotations
 
 import errno
 import json
-import os
 import socket
-import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from .coordinator import Limits
-from .paths import SOCKET_NAME
+from .limits import Limits
+from .paths import SOCKET_NAME, python_flags
 
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_SPAWNS = 2
@@ -70,7 +68,7 @@ def exchange(sock_path: Path, data: bytes, timeout: float) -> dict:
 
 
 def coordinator_argv(settings: Settings) -> list[str]:
-    argv = [sys.executable, "-I", "-B", str(settings.bridge_path), "coordinator", "--runtime-dir", str(settings.runtime_dir)]
+    argv = [sys.executable, *python_flags(settings.data_dir), str(settings.bridge_path), "coordinator", "--runtime-dir", str(settings.runtime_dir)]
     if settings.data_dir is not None:
         argv += ["--data-dir", str(settings.data_dir)]
     for path in settings.ui_sockets:
@@ -84,8 +82,8 @@ def coordinator_argv(settings: Settings) -> list[str]:
 
 def spawn_coordinator(settings: Settings) -> int:
     """Start the coordinator detached: new session, no inherited pipes, reparented to launchd."""
-    env = dict(os.environ)
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    import subprocess  # only the rare cold start pays for this import
+
     child = subprocess.Popen(
         coordinator_argv(settings),
         stdin=subprocess.DEVNULL,
@@ -94,7 +92,6 @@ def spawn_coordinator(settings: Settings) -> int:
         close_fds=True,
         start_new_session=True,
         cwd="/",
-        env=env,
     )
     return child.pid
 

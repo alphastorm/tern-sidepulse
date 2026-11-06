@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import json
 import os
-import secrets
-import traceback
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Callable
 
 from . import PROTOCOL_SCHEMA, VERSION
 from .clock import Clock
+from .jsonio import load_json
+from .limits import Limits
 from .reducer import (
     IDLE_READY,
     KNOWN_STATES,
@@ -54,40 +54,6 @@ DIAG_KEYS = (
 DIAG_MAX = 100_000
 
 
-@dataclass(frozen=True)
-class Limits:
-    """Initial constants from the implementation packet; injectable for tests."""
-
-    lease: float = 15.0
-    reaper: float = 1.0
-    done_notice: float = 15.0
-    failed_notice: float = 30.0
-    exit_grace: float = 5.0
-    final_grace: float = 60.0
-    discontinuity: float = 5.0
-    max_observers: int = 64
-    max_observations: int = 512
-    max_tokens: int = 256
-    max_request_bytes: int = 256 * 1024
-    read_deadline: float = 2.0
-
-    def to_dict(self) -> dict:
-        return {name: getattr(self, name) for name in self.__dataclass_fields__}
-
-    @classmethod
-    def from_mapping(cls, data: object) -> "Limits":
-        if not isinstance(data, dict):
-            raise ValueError("limits must be a JSON object")
-        values: dict = {}
-        for name, value in data.items():
-            if name not in cls.__dataclass_fields__:
-                raise ValueError(f"unknown limit {name}")
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-                raise ValueError(f"limit {name} must be a positive number")
-            values[name] = int(value) if name.startswith("max_") else float(value)
-        return cls(**values)
-
-
 class ProtocolError(Exception):
     """A structured rejection; ``detail`` is always a fixed message, never a client value."""
 
@@ -118,7 +84,6 @@ class ObserverState:
     key: str
     generation: int
     seq: int
-    activated_at: float
     expires_at: float
     observations: dict[str, Observation] = field(default_factory=dict)
     notices: dict[str, NoticeTrack] = field(default_factory=dict)  # one track per pane
@@ -137,8 +102,8 @@ def observer_key(observer: object) -> str:
     window_key = observer.get("window_key", "")
     if isinstance(parent_pid, bool) or not isinstance(parent_pid, int) or parent_pid <= 0:
         raise ProtocolError("bad_request", "observer.parent_pid must be a positive integer")
-    if not isinstance(window_key, str) or len(window_key) > MAX_WINDOW_KEY:
-        raise ProtocolError("bad_request", "observer.window_key must be a short string")
+    if not isinstance(window_key, str) or len(window_key) > MAX_WINDOW_KEY or not window_key.isprintable():
+        raise ProtocolError("bad_request", "observer.window_key must be a short printable string")
     return f"{parent_pid}:{window_key}"
 
 
@@ -209,7 +174,7 @@ class Coordinator:
         self.disabled = disabled
         self.persist_disabled = persist_disabled
         self.log = log
-        self.epoch = secrets.token_hex(8)
+        self.epoch = os.urandom(8).hex()
         self.started_at = clock.monotonic()
         self.started_wall = clock.wall()
         self.generation_counter = 0
@@ -283,9 +248,7 @@ class Coordinator:
             return body
         except Exception as exc:  # noqa: BLE001 - one bad request must never take the coordinator down
             self.counters["internal_errors"] += 1
-            frame = traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ else None
-            where = f"{os.path.basename(frame.filename)}:{frame.lineno}" if frame else "?"
-            self.log(f"internal error in op {op}: {type(exc).__name__} at {where}")
+            self.log(f"internal error in op {op}: {type(exc).__name__} at {crash_site(exc)}")
             return {"ok": False, "error": "internal", "epoch": self.epoch}
 
     def op_register(self, request: dict) -> dict:
@@ -366,7 +329,7 @@ class Coordinator:
                 self.log(f"observer {key}: generation {observer.generation} replaced by {generation}")
             del self.tokens[generation]
             self.highest_activated[key] = generation
-            observer = ObserverState(key=key, generation=generation, seq=seq, activated_at=now, expires_at=now + self.limits.lease)
+            observer = ObserverState(key=key, generation=generation, seq=seq, expires_at=now + self.limits.lease)
             self.observers[key] = observer
             activated = True
         elif self.is_retired(generation):
@@ -657,8 +620,18 @@ class Coordinator:
         }
 
 
+def crash_site(exc: BaseException) -> str:
+    """``file:line`` of the innermost frame, without importing ``traceback`` on the hot path."""
+    tb = exc.__traceback__
+    if tb is None:
+        return "?"
+    while tb.tb_next is not None:
+        tb = tb.tb_next
+    return f"{os.path.basename(tb.tb_frame.f_code.co_filename)}:{tb.tb_lineno}"
+
+
 def decode_request(raw: bytes) -> object:
     try:
-        return json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as exc:
+        return load_json(raw)
+    except ValueError as exc:
         raise ProtocolError("malformed_json", "request is not valid UTF-8 JSON") from exc

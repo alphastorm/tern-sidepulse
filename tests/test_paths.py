@@ -20,9 +20,22 @@ from tern_sidepulse.paths import (
 
 
 class RuntimeDirTest(unittest.TestCase):
-    def test_long_base_falls_back_to_tmp_and_the_temp_name_binds(self):
-        base = Path("/Users/someone-with-a-very-long-account-name/Library/Application Support/Something/Deep/tern-sidepulse")
-        chosen = runtime_dir(base)
+    LONG_BASE = Path("/Users/someone-with-a-very-long-account-name/Library/Application Support/Something/Deep/tern-sidepulse")
+
+    def test_long_base_prefers_the_private_tmpdir(self):
+        private = short_tmpdir("tsp-T-")
+        with mock.patch.dict(os.environ, {"TMPDIR": str(private)}):
+            chosen = runtime_dir(self.LONG_BASE)
+        self.assertEqual(chosen, private / "tern-sidepulse", "the user's own temp dir is not guessable by other users")
+        with mock.patch.dict(os.environ, {"TMPDIR": "relative/tmp"}):
+            self.assertTrue(str(runtime_dir(self.LONG_BASE)).startswith("/tmp/tern-sidepulse-"), "a relative TMPDIR is ignored")
+        with mock.patch.dict(os.environ, {"TMPDIR": "/" + "x" * 90}):
+            self.assertTrue(str(runtime_dir(self.LONG_BASE)).startswith("/tmp/tern-sidepulse-"), "an over-long TMPDIR is ignored")
+
+    def test_long_base_without_tmpdir_falls_back_to_tmp_and_the_temp_name_binds(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TMPDIR", None)
+            chosen = runtime_dir(self.LONG_BASE)
         self.assertTrue(str(chosen).startswith("/tmp/tern-sidepulse-"))
         temp_name = str(chosen / f"{SOCKET_NAME}.{os.getpid()}")
         self.assertLessEqual(len(temp_name.encode()), MAX_SOCKET_PATH_BYTES)

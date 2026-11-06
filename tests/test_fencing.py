@@ -3,7 +3,8 @@ import unittest
 from tests.helpers import OBS, activate, idle, make_coordinator, register, snapshot, working
 
 from tern_sidepulse import VERSION
-from tern_sidepulse.coordinator import Limits
+from tern_sidepulse.coordinator import ProtocolError, decode_request
+from tern_sidepulse.limits import Limits
 
 
 class FencingTest(unittest.TestCase):
@@ -114,6 +115,29 @@ class FencingTest(unittest.TestCase):
         self.assertEqual(c.handle({"schema": 2, "op": "status"})["error"], "unsupported_schema")
         self.assertEqual(c.handle({"schema": 1, "op": "nope"})["error"], "unknown_op")
         self.assertEqual(c.handle([])["error"], "bad_request")
+        self.assertTrue(c.handle({"schema": 1, "op": "status"})["ok"])
+
+    def test_window_key_must_be_printable(self):
+        # A newline would forge coordinator.log lines; a lone surrogate crashed the reaper when the lease expired.
+        c, _, _, _, _ = make_coordinator()
+        for key in ("a\nb", "\ud800", "\x1b[31m", "x" * 65):
+            self.assertEqual(register(c, {"parent_pid": 1, "window_key": key})["error"], "bad_request", repr(key))
+        self.assertTrue(register(c, {"parent_pid": 1, "window_key": "héllo 2"})["ok"], "printable non-ASCII keys are fine")
+
+    def test_non_finite_and_deeply_nested_requests_are_malformed_not_fatal(self):
+        c, _, _, _, _ = make_coordinator()
+        with self.assertRaises(ProtocolError) as caught:
+            decode_request(b'{"schema": 1, "op": "status", "diag": {"omp": Infinity}}')
+        self.assertEqual(caught.exception.error, "malformed_json")
+        with self.assertRaises(ProtocolError):
+            decode_request(b'{"schema": 1, "op": "snapshot", "limits": NaN}')
+        deep = b"[" * 200_000 + b"]" * 200_000
+        try:
+            decoded = decode_request(deep)  # newer interpreters decode it; older ones must reject, never recurse out
+        except ProtocolError as exc:
+            self.assertEqual(exc.error, "malformed_json")
+        else:
+            self.assertEqual(c.handle(decoded)["error"], "bad_request")
         self.assertTrue(c.handle({"schema": 1, "op": "status"})["ok"])
 
 

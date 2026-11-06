@@ -11,7 +11,6 @@ Two directories matter:
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import stat
 from pathlib import Path
@@ -24,18 +23,40 @@ DOCTOR_NAME = "doctor.json"
 IDENTITY_NAME = "identity.json"
 CONFIG_NAME = "config.json"
 DISABLED_NAME = "disabled"
+PYCACHE_NAME = "pycache"
 MAX_SOCKET_PATH_BYTES = 100  # macOS sun_path holds 104 bytes including the terminator.
 TEMP_SOCKET_SUFFIX_MAX = 11  # "." plus up to ten pid digits while binding.
 
 
+def python_flags(data_dir: Path | None) -> list[str]:
+    """Interpreter flags for every helper and coordinator launch.
+
+    ``-I`` ignores the environment and the script directory, ``-S`` skips site-packages (the helper is
+    standard library only), and bytecode is cached under the plugin data directory, never in the
+    plugin directory, which Tern watches for reloads.
+    """
+    if data_dir is None:
+        return ["-I", "-S", "-B"]
+    return ["-I", "-S", "-X", f"pycache_prefix={data_dir / PYCACHE_NAME}"]
+
+
+def _fits_socket(directory: Path) -> bool:
+    return len(str(directory / SOCKET_NAME).encode("utf-8")) + TEMP_SOCKET_SUFFIX_MAX <= MAX_SOCKET_PATH_BYTES
+
+
 def runtime_dir(base: Path | None = None) -> Path:
-    """The bridge runtime directory, falling back to /tmp when the bound socket path would be too long."""
+    """The bridge runtime directory; when its socket path would be too long, the user's private temp
+    directory (``TMPDIR``, which a Dock-launched Tern and a terminal share on macOS), then ``/tmp``."""
     candidate = (base or (Path.home() / ".local" / "state" / PLUGIN_ID)).expanduser()
-    longest = len(str(candidate / SOCKET_NAME).encode("utf-8")) + TEMP_SOCKET_SUFFIX_MAX
-    if longest > MAX_SOCKET_PATH_BYTES:
-        digest = hashlib.sha256(str(candidate).encode("utf-8")).hexdigest()[:12]
-        candidate = Path("/tmp") / f"{PLUGIN_ID}-{os.getuid()}-{digest}"
-    return candidate
+    if _fits_socket(candidate):
+        return candidate
+    tmpdir = os.environ.get("TMPDIR")
+    if tmpdir and os.path.isabs(tmpdir) and _fits_socket(Path(tmpdir) / PLUGIN_ID):
+        return Path(tmpdir) / PLUGIN_ID
+    import hashlib  # the fallback of the fallback; keep OpenSSL off the hot path
+
+    digest = hashlib.sha256(str(candidate).encode("utf-8")).hexdigest()[:12]
+    return Path("/tmp") / f"{PLUGIN_ID}-{os.getuid()}-{digest}"
 
 
 def ensure_private_dir(path: Path) -> Path:
@@ -73,6 +94,8 @@ def sidepulse_relay_socket_for_dir(state_dir: Path) -> Path:
     path = state_dir / "relay-events.sock"
     if len(str(path).encode("utf-8")) <= 96:
         return path
+    import hashlib
+
     digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
     return Path("/tmp") / f"sidepulse-relay-{os.getuid()}-{digest}.sock"
 

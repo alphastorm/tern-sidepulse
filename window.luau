@@ -49,8 +49,7 @@ local S = {
 	inert = nil :: string?, -- a missing capability keeps the observer inert; doctor reports it
 	window_key = "",
 	python = nil :: string?,
-	python_source = "none",
-	rejected = {} :: { [string]: boolean },
+	rejected = {} :: { [string]: boolean }, -- interpreters that answered python_too_old
 	epoch = nil :: string?,
 	generation = nil :: number?,
 	seq = 0,
@@ -59,18 +58,15 @@ local S = {
 	dirty = false,
 	flush_armed = false,
 	recon_armed = false,
-	fail_count = 0,
-	fence_errors = 0,
+	fail_count = 0, -- consecutive helper calls without an accepted snapshot; drives the backoff
+	fence_errors = 0, -- consecutive fence rejections; three in a row back off instead of re-registering at once
 	retry_at = 0,
 	failing = false,
-	disabled = false,
 	omp = {} :: { [number]: boolean }, -- classification cache: pane -> true
 	notices = {} :: { [number]: { id: string, kind: string, at: number } },
 	notice_seq = 0,
 	diag = {} :: { [string]: number }, -- classification counts of the latest enumeration pass
 	stats = {} :: { [string]: number }, -- cumulative for this VM: budget_pauses, helper_failures
-	last_error = nil :: string?,
-	last_ack = nil :: string?,
 }
 
 local function now_ms(): number
@@ -97,20 +93,19 @@ local function diag_report(): { [string]: number }
 end
 
 local function warn_once(code: string, detail: string?)
-	-- One line when delivery starts failing, one when it recovers; never per retry.
+	-- One line when delivery starts failing, one when it recovers; never per retry. Both at warn:
+	-- Tern's default log filter drops info.
 	if not S.failing then
 		S.failing = true
 		tern.log.warn("tern-sidepulse helper failing", code, detail or "")
 	end
-	S.last_error = code
 end
 
 local function recovered()
 	if S.failing then
 		S.failing = false
-		tern.log.info("tern-sidepulse helper recovered")
+		tern.log.warn("tern-sidepulse helper recovered")
 	end
-	S.last_error = nil
 end
 
 local function backoff(code: string, detail: string?)
@@ -138,20 +133,20 @@ local function resolve_python()
 	local config = read_config()
 	local override = config.python
 	if type(override) == "string" and override:sub(1, 1) == "/" and not S.rejected[override] and tern.fs.exists(override) then
-		S.python, S.python_source = override, "config"
+		S.python = override
 		return
 	end
 	for _, candidate in ipairs(PYTHON_CANDIDATES) do
 		if not S.rejected[candidate] and tern.fs.exists(candidate) then
-			S.python, S.python_source = candidate, "candidate"
+			S.python = candidate
 			return
 		end
 	end
 	if not S.rejected["/usr/bin/python3"] and tern.fs.exists(CLT_PYTHON) then
-		S.python, S.python_source = "/usr/bin/python3", "clt"
+		S.python = "/usr/bin/python3"
 		return
 	end
-	S.python, S.python_source = nil, "none"
+	S.python = nil
 end
 
 -- ---- enumeration ---------------------------------------------------------------------------
@@ -220,64 +215,64 @@ local function enumerate(cx: WindowCx): (string, { any })
 		local pane = num(row.pane)
 		if pane ~= nil then
 			seen[pane] = true
+			-- `kind` and `program` are undocumented and diagnostics only: `cx.agents:list()` already
+			-- returns agent blocks, and `tern new tab -- env … omp` reports `program = "env"`. The
+			-- surface role decides below; excluding on either field would silently drop sessions.
 			local kind = str(row.kind)
 			local program = str(row.program)
 			if kind ~= nil and kind ~= "agent" then
 				count("non_omp")
+			end
+			if program == nil then
+				count("program_missing")
+			elseif program ~= "omp" then
+				count("wrapped")
+			end
+			local state = str(row.state) or "unknown"
+			if row.alive == false then
+				state = "exited"
+			end
+			if state == "exited" or state == "closed" then
+				count("exited")
 				S.omp[pane] = nil
 				S.notices[pane] = nil
 			else
-				if program == nil then
-					count("program_missing")
-				elseif program ~= "omp" then
-					count("wrapped") -- OMP under env/npx/a script: the surface role still decides
-				end
-				local state = str(row.state) or "unknown"
-				if row.alive == false then
-					state = "exited"
-				end
-				if state == "exited" or state == "closed" then
-					count("exited")
-					S.omp[pane] = nil
+				local host = num(row.host) or pane_host[pane] or only_host
+				if host == nil then
+					count("unmapped")
+					S.notices[pane] = nil
+				elseif host_state[host] ~= "connected" then
+					count("host_unavailable")
 					S.notices[pane] = nil
 				else
-					local host = num(row.host) or pane_host[pane] or only_host
-					if host == nil then
-						count("unmapped")
-						S.notices[pane] = nil
-					elseif host_state[host] ~= "connected" then
-						count("host_unavailable")
-						S.notices[pane] = nil
+					if not S.omp[pane] then
+						local ok_surface, tree = pcall(function()
+							return cx.session:surface(pane, SURFACE_OPTS)
+						end)
+						if ok_surface and type(tree) == "table" and type(tree.surface) == "table" and tree.surface.role == "omp.session" then
+							S.omp[pane] = true
+						end
+					end
+					if not S.omp[pane] then
+						count("unclassified")
 					else
-						if not S.omp[pane] then
-							local ok_surface, tree = pcall(function()
-								return cx.session:surface(pane, SURFACE_OPTS)
-							end)
-							if ok_surface and type(tree) == "table" and type(tree.surface) == "table" and tree.surface.role == "omp.session" then
-								S.omp[pane] = true
+						count("omp")
+						if state ~= "idle" and state ~= "working" and state ~= "waiting_input" then
+							count("unknown_state")
+							state = "unknown"
+						end
+						local notice = S.notices[pane]
+						local sent_notice = nil
+						if notice ~= nil then
+							if now_ms() - notice.at > (S.ttl[notice.kind] or S.ttl.done) then
+								S.notices[pane] = nil
+							elseif state == "working" or state == "waiting_input" then
+								S.notices[pane] = nil
+							elseif state == "idle" then
+								sent_notice = { id = notice.id, kind = notice.kind }
 							end
 						end
-						if not S.omp[pane] then
-							count("unclassified")
-						else
-							count("omp")
-							if state ~= "idle" and state ~= "working" and state ~= "waiting_input" then
-								count("unknown_state")
-								state = "unknown"
-							end
-							local notice = S.notices[pane]
-							local sent_notice = nil
-							if notice ~= nil then
-								if now_ms() - notice.at > (S.ttl[notice.kind] or S.ttl.done) then
-									S.notices[pane] = nil
-								elseif state == "working" or state == "waiting_input" then
-									S.notices[pane] = nil
-								elseif state == "idle" then
-									sent_notice = { id = notice.id, kind = notice.kind }
-								end
-							end
-							table.insert(observations, { pane = pane, state = state, notice = sent_notice })
-						end
+						table.insert(observations, { pane = pane, state = state, notice = sent_notice })
 					end
 				end
 			end
@@ -326,15 +321,19 @@ local function run_helper(op: string, payload: any, cb: (any, string?, WindowCx?
 		cb(nil, "python_unavailable", nil)
 		return false
 	end
-	local argv = { S.python, "-I", "-B", BRIDGE, op, "--data-dir", DATA }
-	local opts = { stdin = tern.json.encode(payload), env = { PYTHONDONTWRITEBYTECODE = "1" }, timeout_ms = HELPER_TIMEOUT_MS }
+	-- Mirrors tern_sidepulse.paths.python_flags: isolated, no site-packages, bytecode cached under
+	-- the data directory (the plugin directory is watched for reloads).
+	local argv = { S.python, "-I", "-S", "-X", "pycache_prefix=" .. DATA .. "/pycache", BRIDGE, op, "--data-dir", DATA }
+	local opts = { stdin = tern.json.encode(payload), timeout_ms = HELPER_TIMEOUT_MS }
 	local ok, _err = pcall(tern.process.run, argv, opts, function(result: ProcessResult, cx: WindowCx?)
 		local decoded, code = parse_result(result)
-		if decoded == nil and result.status == 3 and S.python ~= nil then
-			-- The interpreter is too old: refuse it for this VM and look again.
+		local too_old = result.status == 3 or (type(decoded) == "table" and decoded.error == "python_too_old")
+		if too_old and S.python ~= nil then
+			-- bridge.py answers with JSON and exit status 3 under an old interpreter: refuse that
+			-- interpreter for this VM and look again; the next attempt uses the replacement.
 			S.rejected[S.python] = true
 			resolve_python()
-			code = "python_too_old"
+			decoded, code = nil, "python_too_old"
 		end
 		cb(decoded, code, cx)
 	end)
@@ -363,17 +362,23 @@ local function request_flush()
 	end)
 end
 
+-- Leaving a generation (a fence, a command, the latch) also drops the pending outcome notices:
+-- a new generation starts a fresh notice track at the coordinator, so replaying one would show
+-- an old completion or failure again.
+local function drop_generation()
+	S.generation, S.epoch = nil, nil
+	S.notices = {}
+end
+
 local function handle_error(code: string, body: any)
 	if code == "disabled" then
-		S.disabled = true
-		S.generation = nil
+		drop_generation()
 		S.dirty = false
 		recovered()
 		return
 	end
 	if FENCE_ERRORS[code] then
-		S.generation, S.epoch = nil, nil
-		S.notices = {} -- never replay notices into a new generation
+		drop_generation()
 		S.fence_errors += 1
 		if S.fence_errors >= 3 then
 			backoff(code, nil)
@@ -389,22 +394,21 @@ local function handle_error(code: string, body: any)
 	backoff(code, detail)
 end
 
+-- Counters reset only on an accepted snapshot: a register that succeeds while every snapshot is
+-- fenced (a shim interpreter changing the helper's parent pid) or a helper that keeps answering
+-- coordinator_unavailable must reach the 30 s backoff, not retry every second for ever.
 local function on_register(body: any, code: string?, cx: WindowCx?)
 	S.in_flight = false
 	if body == nil then
 		backoff(code or "helper_failed", nil)
 	elseif body.ok == true and type(body.generation) == "number" and type(body.epoch) == "string" then
-		S.fail_count, S.fence_errors = 0, 0
 		S.epoch, S.generation, S.seq = body.epoch, body.generation, 0
 		if type(body.notice_seconds) == "table" then
 			S.ttl.done = (num(body.notice_seconds.done) or 15) * 1000 + 5000
 			S.ttl.failed = (num(body.notice_seconds.failed) or 30) * 1000 + 5000
 		end
-		S.disabled = false
-		recovered()
 		S.dirty = true -- the activating snapshot is a separate call
 	else
-		S.fail_count = 0
 		handle_error(str(body.error) or "helper_failed", body)
 	end
 	if cx and S.dirty then
@@ -419,9 +423,7 @@ local function on_snapshot(body: any, code: string?, cx: WindowCx?)
 	elseif body.ok == true then
 		S.fail_count, S.fence_errors = 0, 0
 		recovered()
-		S.last_ack = str(body.desired)
 	else
-		S.fail_count = 0
 		handle_error(str(body.error) or "helper_failed", body)
 	end
 	if cx and S.dirty then
@@ -451,15 +453,13 @@ local function start_snapshot(cx: WindowCx)
 end
 
 pump = function(cx: WindowCx)
-	if S.inert or S.in_flight or not S.dirty then
+	if not S.booted or S.inert or S.in_flight or not S.dirty then
 		return
 	end
 	if is_disabled() then
-		S.disabled = true
 		S.dirty = false
 		return
 	end
-	S.disabled = false
 	local wait = S.retry_at - now_ms()
 	if wait > 0 then
 		if not S.flush_armed then
@@ -567,24 +567,25 @@ tern.command({
 	title = "SidePulse bridge: doctor",
 	icon = "sparkle",
 	run = function(cx)
-		run_helper("doctor", { window_key = S.window_key, diag = diag_report() }, function(body, code, cx2)
+		run_helper("doctor", { window_key = S.window_key, diag = diag_report(), inert = S.inert }, function(body, code, cx2)
 			if not cx2 then
 				return
 			end
+			local prefix = ""
+			if S.inert then
+				prefix = "window: " .. S.inert .. " · "
+			elseif S.python == nil then
+				prefix = "window: no python found · "
+			end
 			if body == nil then
-				cx2:toast("error", "SidePulse bridge doctor", code or "helper failed")
+				cx2:toast("error", "SidePulse bridge doctor", prefix .. (code or "helper failed"))
 				return
 			end
 			local level = str(body.level) or "error"
 			local tone = if level == "ok" then "success" elseif level == "warn" then "info" else "error"
-			local sub = str(body.summary) or ""
+			local sub = prefix .. (str(body.summary) or "")
 			if type(body.report) == "string" then
 				sub = sub .. " · " .. body.report
-			end
-			if S.inert then
-				sub = "window: " .. S.inert .. " · " .. sub
-			elseif S.python == nil then
-				sub = "window: no python found · " .. sub
 			end
 			cx2:toast(tone, "SidePulse bridge doctor", sub)
 		end)
@@ -596,7 +597,7 @@ tern.command({
 	title = "SidePulse bridge: resync",
 	icon = "sparkle",
 	run = function(_cx)
-		S.generation, S.epoch = nil, nil -- fresh registration and a fresh complete snapshot
+		drop_generation() -- fresh registration and a fresh complete snapshot
 		run_helper("resync", {}, function(body, code, cx2)
 			toast_result(cx2, "SidePulse bridge resync", body, code)
 			request_flush()
@@ -609,9 +610,8 @@ tern.command({
 	title = "SidePulse bridge: disable",
 	icon = "sparkle",
 	run = function(_cx)
-		S.generation, S.epoch = nil, nil
+		drop_generation()
 		run_helper("disable", {}, function(body, code, cx2)
-			S.disabled = true
 			toast_result(cx2, "SidePulse bridge disabled", body, code)
 		end)
 	end,
@@ -622,9 +622,8 @@ tern.command({
 	title = "SidePulse bridge: enable",
 	icon = "sparkle",
 	run = function(_cx)
-		S.generation, S.epoch = nil, nil
+		drop_generation()
 		run_helper("enable", {}, function(body, code, cx2)
-			S.disabled = false
 			toast_result(cx2, "SidePulse bridge enabled", body, code)
 			request_flush()
 		end)
@@ -633,8 +632,19 @@ tern.command({
 
 -- ---- bootstrap -------------------------------------------------------------------------------
 
+local boot_tries = 0
+
 local function bootstrap(cx: WindowCx?)
-	if S.booted or not cx then
+	if S.booted then
+		return
+	end
+	if not cx then
+		-- The timer's cx is optional: retry for a while rather than never booting; window_start can
+		-- still boot a first window later.
+		boot_tries += 1
+		if boot_tries <= 40 then
+			tern.timer(250, bootstrap)
+		end
 		return
 	end
 	S.booted = true
@@ -642,17 +652,27 @@ local function bootstrap(cx: WindowCx?)
 	if tern.runtime.os == "ios" then
 		table.insert(missing, "processes")
 	end
-	if not (cx.agents and cx.agents.list) then
-		table.insert(missing, "cx.agents:list")
-	end
-	if not (cx.hosts and cx.hosts.list) then
-		table.insert(missing, "cx.hosts:list")
-	end
-	if not (cx.session and cx.session.surface) then
-		table.insert(missing, "cx.session:surface")
-	end
-	if not (tern.process and tern.process.run) then
-		table.insert(missing, "tern.process.run")
+	-- Probing a member a Tern build lacks must not throw out of bootstrap and leave the window
+	-- neither observing nor marked inert.
+	local probes = {
+		{ name = "cx.agents:list", present = function()
+			return cx.agents and cx.agents.list
+		end },
+		{ name = "cx.hosts:list", present = function()
+			return cx.hosts and cx.hosts.list
+		end },
+		{ name = "cx.session:surface", present = function()
+			return cx.session and cx.session.surface
+		end },
+		{ name = "tern.process.run", present = function()
+			return tern.process and tern.process.run
+		end },
+	}
+	for _, probe in ipairs(probes) do
+		local ok, present = pcall(probe.present)
+		if not ok or not present then
+			table.insert(missing, probe.name)
+		end
 	end
 	if #missing > 0 then
 		S.inert = "missing " .. table.concat(missing, ", ")

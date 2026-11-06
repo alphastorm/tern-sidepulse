@@ -47,7 +47,7 @@ class PrivacyTest(unittest.TestCase):
         from tests.helpers import short_tmpdir
 
         from tern_sidepulse.client import Settings
-        from tern_sidepulse.coordinator import Limits
+        from tern_sidepulse.limits import Limits
 
         tmp = short_tmpdir("tsp-doc-")
         settings = Settings(data_dir=tmp / "data", runtime_dir=tmp / "rt", ui_sockets=(tmp / "events.sock",), service_sockets=(tmp / "relay-events.sock",), limits=Limits(), bridge_path=tmp / "bridge.py")

@@ -5,21 +5,24 @@ was produced (including protocol rejections), 2 for a usage error, 1 for an inte
 """
 from __future__ import annotations
 
-import argparse
 import errno
 import json
 import os
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import PROTOCOL_SCHEMA, VERSION
 from .client import CoordinatorUnavailable, Settings, request
-from .coordinator import Limits
+from .jsonio import load_json
+from .limits import Limits
 from .paths import runtime_dir, sidepulse_service_sockets, sidepulse_ui_sockets
 from .storage import is_disabled, load_config, set_disabled
 
 MAX_STDIN_BYTES = 256 * 1024
 SUBCOMMANDS = ("register", "snapshot", "status", "enable", "disable", "resync", "doctor", "coordinator")
+SINGLE_OPTIONS = {"--data-dir": "data_dir", "--runtime-dir": "runtime_dir", "--limits": "limits"}
+REPEATED_OPTIONS = {"--ui-socket": "ui_socket", "--service-socket": "service_socket"}
 
 
 class UsageError(Exception):
@@ -43,7 +46,7 @@ def _paths_from(values: list[str] | None, env_name: str, config: dict, key: str,
     return default
 
 
-def resolve_settings(args: argparse.Namespace, bridge_path: Path) -> Settings:
+def resolve_settings(args: Args, bridge_path: Path) -> Settings:
     """Precedence: flag > environment > <data>/config.json > default."""
     data_dir = args.data_dir or os.environ.get("TERN_PLUGIN_DATA")
     data_path = Path(data_dir).expanduser() if data_dir else None
@@ -52,7 +55,7 @@ def resolve_settings(args: argparse.Namespace, bridge_path: Path) -> Settings:
     runtime = runtime_dir(Path(runtime_value).expanduser()) if runtime_value else runtime_dir()
     limits_json = args.limits or os.environ.get("TERN_SIDEPULSE_LIMITS")
     try:
-        limits = Limits.from_mapping(json.loads(limits_json)) if limits_json else Limits()
+        limits = Limits.from_mapping(load_json(limits_json.encode("utf-8"))) if limits_json else Limits()
     except ValueError as exc:
         raise UsageError(f"bad limits: {exc}") from exc
     return Settings(
@@ -73,23 +76,42 @@ def read_stdin_json() -> dict:
     if not raw.strip():
         return {}
     try:
-        data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as exc:
+        data = load_json(raw)
+    except ValueError as exc:
         raise UsageError("stdin is not valid JSON") from exc
     if not isinstance(data, dict):
         raise UsageError("stdin must be a JSON object")
     return data
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="bridge.py", description="tern-sidepulse helper")
-    parser.add_argument("command", choices=SUBCOMMANDS)
-    parser.add_argument("--data-dir", help="Tern plugin data directory (default: $TERN_PLUGIN_DATA)")
-    parser.add_argument("--runtime-dir", help="bridge runtime directory (default: ~/.local/state/tern-sidepulse)")
-    parser.add_argument("--ui-socket", action="append", help="SidePulse app socket candidate (repeatable)")
-    parser.add_argument("--service-socket", action="append", help="SidePulse service socket candidate (repeatable)")
-    parser.add_argument("--limits", help="JSON object overriding timing limits (tests)")
-    return parser
+@dataclass
+class Args:
+    """``bridge.py <command> [--data-dir D] [--runtime-dir R] [--ui-socket S]… [--service-socket S]… [--limits JSON]``."""
+
+    command: str
+    data_dir: str | None = None
+    runtime_dir: str | None = None
+    limits: str | None = None
+    ui_socket: list[str] = field(default_factory=list)
+    service_socket: list[str] = field(default_factory=list)
+
+
+def parse_args(argv: list[str]) -> Args:
+    """A fixed grammar instead of argparse, which costs the helper more than its own work."""
+    if not argv or argv[0] not in SUBCOMMANDS:
+        raise UsageError("command must be one of " + ", ".join(SUBCOMMANDS))
+    args = Args(argv[0])
+    rest = argv[1:]
+    while rest:
+        flag = rest[0]
+        if len(rest) < 2 or flag not in SINGLE_OPTIONS and flag not in REPEATED_OPTIONS:
+            raise UsageError("bad arguments")
+        value, rest = rest[1], rest[2:]
+        if flag in SINGLE_OPTIONS:
+            setattr(args, SINGLE_OPTIONS[flag], value)
+        else:
+            getattr(args, REPEATED_OPTIONS[flag]).append(value)
+    return args
 
 
 def require_data_dir(settings: Settings) -> Path:
@@ -112,13 +134,8 @@ def observer_payload(window: dict, op: str) -> dict:
 
 
 def main(argv: list[str], bridge_path: Path) -> int:
-    parser = build_parser()
     try:
-        args = parser.parse_args(argv)
-    except SystemExit as exc:
-        _emit({"ok": False, "error": "usage", "detail": "bad arguments"})
-        return 2 if exc.code else 0
-    try:
+        args = parse_args(argv)
         settings = resolve_settings(args, bridge_path)
         command = args.command
         if command == "coordinator":
@@ -172,7 +189,8 @@ def main(argv: list[str], bridge_path: Path) -> int:
 
             window = read_stdin_json() if not sys.stdin.isatty() else {}
             window_key = window.get("window_key") if isinstance(window.get("window_key"), str) else os.environ.get("TERN_WINDOW_KEY")
-            _emit(run_doctor(settings, window.get("diag"), window_key))
+            inert = window.get("inert")
+            _emit(run_doctor(settings, window.get("diag"), window_key, inert if isinstance(inert, str) else None))
             return 0
         raise UsageError("unknown command")
     except UsageError as exc:
