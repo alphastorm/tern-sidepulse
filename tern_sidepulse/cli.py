@@ -153,7 +153,7 @@ def main(argv: list[str], bridge_path: Path) -> int:
             data_dir = require_data_dir(settings)
             window = read_stdin_json()
             if is_disabled(data_dir):
-                _emit({"ok": False, "error": "disabled", "detail": "the bridge is disabled; run enable first"})
+                _emit({"ok": False, "error": "disabled", "detail": "tern-sidepulse is disabled; run enable first"})
                 return 0
             _emit(request(settings, observer_payload(window, command), spawn=True))
             return 0

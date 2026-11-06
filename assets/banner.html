@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tern-sidepulse — banner</title>
+<link rel="stylesheet" href="brand.css">
+<style>
+  .banner { width: 1280px; height: 320px; padding: 38px 56px 34px; display: grid; grid-template-rows: 30px 1fr 24px; }
+  .top, .bottom { display: flex; align-items: center; justify-content: space-between; }
+  .brand-name { font-size: 19px; }
+  .hero { display: grid; grid-template-columns: 1fr 150px; align-items: center; gap: 60px; }
+  h1 { margin: 0; font-size: 46px; line-height: 1.05; letter-spacing: -.035em; font-weight: 600; }
+  h1 span { color: var(--pane); }
+  .sub { margin-top: 14px; max-width: 860px; color: var(--body); font-size: 17px; line-height: 1.42; }
+  .pane-mark { width: 150px; height: 150px; }
+  .bottom { justify-content: flex-start; gap: 10px; font-size: 12px; color: var(--muted); letter-spacing: .04em; white-space: nowrap; }
+  .bottom .sep { color: var(--line-strong); }
+  .bottom .legal { margin-left: auto; font-family: "Space Grotesk", system-ui, sans-serif; font-size: 11px; letter-spacing: 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="canvas banner">
+  <div class="top">
+    <div class="brand"><span class="brand-name">tern-sidepulse</span><span class="brand-rule"></span><span class="eyebrow">Tern window plugin</span></div>
+    <div class="eyebrow" style="display:flex;align-items:center;gap:10px"><span class="kin"></span><span>Oh My Pi sessions · working · waiting · done · failed</span></div>
+  </div>
+  <div class="hero">
+    <div>
+      <h1>Your OMP sessions in Tern. <span>On SidePulse.</span></h1>
+      <div class="sub">A Tern window plugin that shows the OMP sessions in your open Tern windows on SidePulse's LEDs and menu-bar status, remote hosts included. It never reads a transcript or submits a prompt.</div>
+    </div>
+    <div class="pane-mark"><img src="logo.svg" alt=""></div>
+  </div>
+  <div class="bottom mono">
+    <span class="dot"></span>
+    <span>no network listener · no transcripts read · nothing installed on remote hosts</span>
+    <span class="legal">Community project; not affiliated with or endorsed by the Oh My Pi, Tern, or SidePulse maintainers.</span>
+  </div>
+</div>
+</body>
+</html>

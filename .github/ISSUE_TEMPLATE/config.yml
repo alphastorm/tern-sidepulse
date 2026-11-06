@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/alphastorm/tern-sidepulse/security/advisories/new
+    about: Report vulnerabilities in tern-sidepulse privately. Never include transcripts, prompts, or unredacted private paths.
+  - name: Upstream Oh My Pi issue
+    url: https://github.com/can1357/oh-my-pi/issues
+    about: Behavior of the unmodified Oh My Pi (OMP) coding agent belongs upstream.
+  - name: Upstream SidePulse issue
+    url: https://github.com/inteliwear/sidepulse/issues
+    about: Behavior of the unmodified SidePulse menu-bar app, headless service, or hardware belongs upstream.

@@ -583,7 +583,7 @@ end
 
 tern.command({
 	id = "doctor",
-	title = "SidePulse bridge: doctor",
+	title = "tern-sidepulse: doctor",
 	icon = "sparkle",
 	run = function(cx)
 		run_helper("doctor", { window_key = S.window_key, diag = diag_report(), inert = S.inert }, function(body, code, cx2)
@@ -595,7 +595,7 @@ tern.command({
 				prefix = "window: no python found · "
 			end
 			if body == nil then
-				toast(target, "error", "SidePulse bridge doctor", prefix .. (code or "helper failed"))
+				toast(target, "error", "tern-sidepulse doctor", prefix .. (code or "helper failed"))
 				return
 			end
 			local level = str(body.level) or "error"
@@ -604,19 +604,19 @@ tern.command({
 			if type(body.report) == "string" then
 				sub = sub .. " · " .. body.report
 			end
-			toast(target, tone, "SidePulse bridge doctor", sub)
+			toast(target, tone, "tern-sidepulse doctor", sub)
 		end)
 	end,
 })
 
 tern.command({
 	id = "resync",
-	title = "SidePulse bridge: resync",
+	title = "tern-sidepulse: resync",
 	icon = "sparkle",
 	run = function(cx)
 		drop_generation() -- fresh registration and a fresh complete snapshot
 		run_helper("resync", {}, function(body, code, cx2)
-			toast_result(cx2 or cx, "SidePulse bridge resync", body, code)
+			toast_result(cx2 or cx, "tern-sidepulse resync", body, code)
 			request_flush()
 		end)
 	end,
@@ -624,24 +624,24 @@ tern.command({
 
 tern.command({
 	id = "disable",
-	title = "SidePulse bridge: disable",
+	title = "tern-sidepulse: disable",
 	icon = "sparkle",
 	run = function(cx)
 		drop_generation()
 		run_helper("disable", {}, function(body, code, cx2)
-			toast_result(cx2 or cx, "SidePulse bridge disabled", body, code)
+			toast_result(cx2 or cx, "tern-sidepulse disabled", body, code)
 		end)
 	end,
 })
 
 tern.command({
 	id = "enable",
-	title = "SidePulse bridge: enable",
+	title = "tern-sidepulse: enable",
 	icon = "sparkle",
 	run = function(cx)
 		drop_generation()
 		run_helper("enable", {}, function(body, code, cx2)
-			toast_result(cx2 or cx, "SidePulse bridge enabled", body, code)
+			toast_result(cx2 or cx, "tern-sidepulse enabled", body, code)
 			request_flush()
 		end)
 	end,

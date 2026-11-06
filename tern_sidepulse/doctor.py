@@ -50,7 +50,7 @@ def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: 
         else:
             _check(checks, "identity", "ok", f"session {session_id_for(identity)[:24]}…")
         if is_disabled(data_dir):
-            _check(checks, "latch", "warn", "bridge disabled", "run the SidePulse bridge: enable command")
+            _check(checks, "latch", "warn", "disabled (latch file present)", "run the tern-sidepulse: enable command")
         else:
             _check(checks, "latch", "ok", "enabled")
 
@@ -92,7 +92,7 @@ def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: 
             if not present:
                 _check(checks, f"receiver_{family['name']}", "warn", "no socket file", "start SidePulse (menu-bar app or `sidepulse service`)")
             elif error and family.get("pending"):
-                _check(checks, f"receiver_{family['name']}", "error", f"delivery failing: {error}", "restart SidePulse; the bridge retries with backoff")
+                _check(checks, f"receiver_{family['name']}", "error", f"delivery failing: {error}", "restart SidePulse; the coordinator retries with backoff")
             else:
                 _check(checks, f"receiver_{family['name']}", "ok", f"delivered {delivered} at {family.get('delivered_wall')} via {family.get('delivered_target')}")
     for directory in sidepulse_state_dirs():

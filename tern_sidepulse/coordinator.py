@@ -253,7 +253,7 @@ class Coordinator:
 
     def op_register(self, request: dict) -> dict:
         if self.disabled:
-            raise ProtocolError("disabled", "the bridge is disabled; run enable first")
+            raise ProtocolError("disabled", "tern-sidepulse is disabled; run enable first")
         client_version = request.get("client_version")
         if isinstance(client_version, str) and client_version != VERSION:
             # The plugin was updated under a running coordinator: step aside so the new code takes over.
@@ -285,7 +285,7 @@ class Coordinator:
 
     def op_snapshot(self, request: dict) -> dict:
         if self.disabled:
-            raise ProtocolError("disabled", "the bridge is disabled; run enable first")
+            raise ProtocolError("disabled", "tern-sidepulse is disabled; run enable first")
         if request.get("epoch") != self.epoch:
             raise ProtocolError("epoch_mismatch", "the coordinator restarted; register again")
         key = observer_key(request.get("observer"))

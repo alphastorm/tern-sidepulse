@@ -1,6 +1,44 @@
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
+  <img src="assets/logo-light.svg" alt="" width="72" height="72">
+</picture>
+
 # tern-sidepulse
 
-SidePulse for OMP (`tern-sidepulse`) is a [Tern](https://stencil.so/tern) window plugin that shows the [OMP](https://github.com/can1357/oh-my-pi) sessions visible in your open Tern windows on [SidePulse](https://github.com/inteliwear/sidepulse), including sessions on attached remote hosts. Tern supplies the window state and SidePulse drives the LEDs and menu-bar status alongside your other monitored agents; the plugin never reads transcripts, submits prompts, approves actions, or changes window layouts.
+**Your OMP sessions in Tern. On SidePulse.**
+
+**Exercised on macOS 27.2 with Tern `0.9.12`, OMP `18.16.0`, and SidePulse revision `ffb1d3c2`.**
+
+tern-sidepulse is a [Tern](https://stencil.so/tern) window plugin. It puts the [Oh My Pi](https://github.com/can1357/oh-my-pi) (OMP) sessions visible in your open Tern windows, including sessions on attached remote hosts, on [SidePulse](https://github.com/inteliwear/sidepulse): Tern supplies the window state, and SidePulse drives the LEDs and menu-bar status alongside your other monitored agents. The plugin never reads transcripts, submits prompts, approves actions, or changes window layouts.
+
+<img src="docs/media/tern-sidepulse-demo.gif" alt="A stylized Tern window with two OMP panes beside SidePulse's eight-LED strip: one working pane shows the cyan roll; when the other pane asks a question SidePulse switches to waiting for input with a slow amber pulse; after both turns finish SidePulse shows completed in solid green, then the status clears to idle." width="900">
+
+<sub>Synthetic illustration rendered from <a href="assets/demo.html">assets/demo.html</a>; not a capture and not LED evidence (<a href="docs/media/README.md">provenance</a> · <a href="docs/media/tern-sidepulse-demo.mp4">MP4</a>).</sub>
+
+**[Get started](#install)** · **[What you see](#what-you-see)** · **[How it works](#how-it-works)** · **[Privacy](#privacy-and-hardening)** · **[Compatibility](docs/compatibility.md)** · **[Website](https://alphastorm.github.io/tern-sidepulse/)** · **[Changelog](CHANGELOG.md)**
+
+[![CI][ci-badge]][ci]
+[![Release][release-badge]][releases]
+[![Tern baseline][tern-badge]][compatibility]
+[![License][license-badge]][license]
+
+[ci]: https://github.com/alphastorm/tern-sidepulse/actions/workflows/ci.yml
+[ci-badge]: https://img.shields.io/github/actions/workflow/status/alphastorm/tern-sidepulse/ci.yml?branch=main&label=CI&color=1C232B&labelColor=0B0E11
+[releases]: https://github.com/alphastorm/tern-sidepulse/releases
+[release-badge]: https://img.shields.io/github/v/release/alphastorm/tern-sidepulse?filter=v*&label=release&color=70B3F7&labelColor=0B0E11
+[compatibility]: docs/compatibility.md
+[tern-badge]: https://img.shields.io/badge/Tern%20baseline-0.9.12-70B3F7?labelColor=0B0E11
+[license]: LICENSE
+[license-badge]: https://img.shields.io/github/license/alphastorm/tern-sidepulse?color=1C232B&labelColor=0B0E11
+
+<sub><strong>Private by design:</strong> nothing listens on the network · six fields read per agent row · no transcripts, prompts, or titles · nothing installed on remote hosts</sub>
+
+<sub>Community project; not affiliated with or endorsed by the Oh My Pi, Tern, or SidePulse maintainers.</sub>
+
+</div>
 
 ## What you see
 
@@ -41,7 +79,7 @@ To pin a release, check out its tag and run `tern plugin install /path/to/checko
 ## Confirm it works
 
 1. Wait about 5 s after installing or linking so the window registers and picks up any existing OMP sessions (nothing needs restarting).
-2. Open the Tern command palette and run `SidePulse bridge: doctor`. Expect a toast starting with `ok:` (`ok: 0 issue(s); socket delivery is not an LED check`). A toast starting with `warn:` names a check that needs attention, such as one SidePulse receiver not running or no snapshot yet; `~/.local/state/tern-sidepulse/doctor.json` lists each check and its remedy.
+2. Open the Tern command palette and run `tern-sidepulse: doctor`. Expect a toast starting with `ok:` (`ok: 0 issue(s); socket delivery is not an LED check`). A toast starting with `warn:` names a check that needs attention, such as one SidePulse receiver not running or no snapshot yet; `~/.local/state/tern-sidepulse/doctor.json` lists each check and its remedy.
 3. Check SidePulse's menu-bar app (or `~/.local/state/sidepulse/agent-monitor/latest.json` when running headless): while an OMP session works or waits, one session from origin `Tern` (`OMP in Tern`) appears.
 
 ## Commands
@@ -50,10 +88,10 @@ From the Tern command palette:
 
 | Command | Does |
 | --- | --- |
-| `SidePulse bridge: doctor` | Checks Python, the data and runtime directories, the coordinator, this window, and each SidePulse receiver; shows a one-line toast and writes `~/.local/state/tern-sidepulse/doctor.json` |
-| `SidePulse bridge: resync` | Re-registers this window and resends the current state to SidePulse |
-| `SidePulse bridge: disable` | Persists the `disabled` latch file, drops every registered window, and clears this plugin's status on SidePulse |
-| `SidePulse bridge: enable` | Removes the `disabled` latch file; this window registers right away and other open windows on their next 5 s cycle |
+| `tern-sidepulse: doctor` | Checks Python, the data and runtime directories, the coordinator, this window, and each SidePulse receiver; shows a one-line toast and writes `~/.local/state/tern-sidepulse/doctor.json` |
+| `tern-sidepulse: resync` | Re-registers this window and resends the current state to SidePulse |
+| `tern-sidepulse: disable` | Persists the `disabled` latch file, drops every registered window, and clears this plugin's status on SidePulse |
+| `tern-sidepulse: enable` | Removes the `disabled` latch file; this window registers right away and other open windows on their next 5 s cycle |
 
 The same operations, plus `status`, from a shell in the plugin directory with Python 3.10 or later:
 
@@ -96,7 +134,7 @@ flowchart LR
 
 ## Privacy and hardening
 
-The plugin reads only `pane`, `state`, `kind`, `program`, `host`, and `alive` from each `cx.agents:list()` row, `id`, `state`, `panes`, and `kind` from `cx.hosts:list()`, and the `surface.role` of each pane. It never reads pane titles, working directories, model names, prompts, assistant text, tool arguments, or transcript paths. None of those fields appear in the helper protocol, the coordinator log, `doctor.json`, or the SidePulse socket payload (`tests/test_privacy.py` pins this).
+The plugin reads only `pane`, `state`, `kind`, `program`, `host`, and `alive` from each `cx.agents:list()` row, `id`, `state`, `panes`, and `kind` from `cx.hosts:list()`, and the `surface.role` of each pane. It never reads pane titles, working directories, model names, prompts, assistant text, tool arguments, or transcript paths. None of those fields appear in the helper protocol, the coordinator log, `doctor.json`, or the SidePulse socket payload (`tests/test_privacy.py` pins this). Report a vulnerability privately through [SECURITY.md](SECURITY.md).
 
 - **Private local files and sockets**: Nothing listens on the network. `~/.local/state/tern-sidepulse` (mode `0700`, ownership checked, symlinks refused) holds `coordinator.sock`, `coordinator.lock`, `coordinator.log`, and `doctor.json`; those files, `identity.json`, and `disabled` are written with mode `0600` under `umask 077`, and `coordinator.sock` is published by atomic rename after `listen(16)`.
 - **Bounded requests and state**: Coordinator requests must be strict UTF-8 JSON (no `NaN`/`Infinity`, deep nesting rejected), capped at 256 KiB, EOF-framed within a 2 s read deadline, and answered within a 0.5 s write deadline across at most 32 concurrent connections. State is capped at 64 windows, 512 panes per window, and 256 registration tokens, with printable window keys of at most 64 characters.
@@ -112,10 +150,10 @@ The plugin reads only `pane`, `state`, `kind`, `program`, `host`, and `alive` fr
 
 ## Uninstall
 
-1. Run **SidePulse bridge: disable** from the Tern palette (or `python3 bridge.py disable --data-dir "$HOME/Library/Application Support/Tern/plugin-data/tern-sidepulse"`). This persists the `disabled` latch, drops every registered window, and clears the plugin's status on SidePulse so a late helper cannot restore an old state.
+1. Run **tern-sidepulse: disable** from the Tern palette (or `python3 bridge.py disable --data-dir "$HOME/Library/Application Support/Tern/plugin-data/tern-sidepulse"`). This persists the `disabled` latch, drops every registered window, and clears the plugin's status on SidePulse so a late helper cannot restore an old state.
 2. Unlink or remove the plugin: `tern plugin unlink tern-sidepulse` for a development link, or `tern plugin remove tern-sidepulse` for an installed copy.
 3. Wait for the coordinator to drain and exit on its own: about 5 s after the clear event is delivered, or at most 60 s if SidePulse is unreachable (`pgrep -f "bridge.py coordinator"` checks whether it is still running).
-4. Tern keeps the plugin data directory (`$HOME/Library/Application Support/Tern/plugin-data/tern-sidepulse`, containing `identity.json`, `disabled`, and `pycache/`), so a later reinstall starts disabled until you run **SidePulse bridge: enable**. For a clean slate, delete `~/.local/state/tern-sidepulse` (or the fallback runtime path reported by `doctor`) and the plugin data directory after step 3 completes.
+4. Tern keeps the plugin data directory (`$HOME/Library/Application Support/Tern/plugin-data/tern-sidepulse`, containing `identity.json`, `disabled`, and `pycache/`), so a later reinstall starts disabled until you run **tern-sidepulse: enable**. For a clean slate, delete `~/.local/state/tern-sidepulse` (or the fallback runtime path reported by `doctor`) and the plugin data directory after step 3 completes.
 
 ## Known limitations
 
@@ -133,6 +171,17 @@ luau-lsp analyze --definitions=types/tern.d.luau window.luau
 ```
 
 `types/tern.d.luau` is the `tern plugin types` output from Tern 0.9.12; regenerate it when targeting a newer Tern release. Set `SIDEPULSE_PYTHON` to a SidePulse interpreter (defaults to `~/.local/share/sidepulse/venv/bin/python` when present) to run `tests/test_sidepulse_contract.py` against the real SidePulse normalizer, and set `TERN_SIDEPULSE_SLOW_TESTS=1` to include the 20 s default-limits timing test in `tests/test_e2e.py`.
+
+Artwork and demo media are rendered by `python3 scripts/render_assets.py` (requires headless Chrome, `ffmpeg` with `libx264`, and network access for the webfonts; `--check` compares the committed PNGs on the same machine; render from a checkout that is not `tern plugin link`ed, because Tern reloads the plugin on every file write). [docs/BRAND.md](docs/BRAND.md) is the brand spec, and `tests/test_site.py` keeps `README.md`, `plugin.toml`, `window.luau`, `site/`, and `.github/workflows/pages.yml` coherent.
+
+## The OMP family
+
+tern-sidepulse shares its presentation with four sibling projects:
+
+- [OMP Session Gateway](https://github.com/carrythroughsystems/omp-session-gateway) — every live OMP session on one private page
+- [OMP NInfer](https://github.com/alphastorm/omp-ninfer) — qualified local inference on an RTX GPU you own
+- [OMP Oracle](https://github.com/alphastorm/omp-oracle) — send the hard question to ChatGPT or Grok and keep working
+- [OMP Strata](https://github.com/alphastorm/omp-strata) — stock OMP on a stock, local Strata server
 
 ## License
 

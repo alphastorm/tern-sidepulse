@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tern-sidepulse — synthetic demo</title>
+<link rel="stylesheet" href="brand.css">
+<style>
+  /* Synthetic illustration (docs/media/README.md). Every pixel is a function of `?t=<seconds>`:
+     scripts/render_assets.py captures one headless-Chrome screenshot per frame, so nothing here reads
+     the clock. Design coordinates are 1200×675; `zoom: 0.8` renders the 960×540 canvas. */
+  :root {
+    --surface: #0E1319; --raised: #0B0E11; --border-subtle: #161C22; --border: #1C232B; --border-strong: #2A343E;
+    --faint: #5F6870;
+    --led-cyan: #00E5FF; --led-amber: #FF3A00; --led-green: #00FF66; --led-dim: #006060;
+    --t: 0s;
+  }
+  html, body { width: 960px; height: 540px; }
+  .canvas { width: 1200px; height: 675px; zoom: 0.8; }
+  .canvas::after { display: none; }
+  .eyebrow.l { position: absolute; left: 48px; top: 40px; }
+  .eyebrow.r { position: absolute; left: 800px; top: 40px; }
+
+  /* A Tern window reduced to chrome: title bar, one tab, two panes with skeleton transcripts. */
+  .win { position: absolute; left: 48px; top: 68px; width: 672px; height: 520px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border-strong); box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.9); overflow: hidden; }
+  .titlebar { height: 38px; display: flex; align-items: center; padding: 0 14px; gap: 8px; border-bottom: 1px solid var(--border); background: var(--raised); }
+  .titlebar i { width: 11px; height: 11px; border-radius: 50%; background: var(--border-strong); display: block; }
+  .titlebar .tabs { margin-left: 18px; display: flex; gap: 6px; align-items: center; }
+  .tab { font: 500 11.5px/1 "JetBrains Mono", ui-monospace, monospace; color: var(--muted); padding: 7px 10px; border-radius: 6px; }
+  .tab.on { color: var(--ink); background: var(--surface); border: 1px solid var(--border); }
+  .tab.plus { color: var(--faint); padding: 7px 6px; }
+  .panes { position: absolute; inset: 39px 0 0 0; display: grid; grid-template-columns: 1fr 1fr; }
+  .pane { position: relative; padding: 16px 18px 46px; overflow: hidden; }
+  .pane + .pane { border-left: 1px solid var(--border); }
+  .pane .head { font: 500 11px/1 "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin-bottom: 16px; display: flex; justify-content: space-between; }
+  .lines { display: grid; gap: 9px; align-content: start; }
+  .line { height: 8px; border-radius: 4px; background: #1A212A; }
+  .line.hot { background: #243040; }
+  .line.tool { height: 22px; border-radius: 6px; background: var(--raised); border: 1px solid var(--border); width: 46% !important; display: flex; align-items: center; padding: 0 8px; gap: 8px; }
+  .line.tool::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--border-strong); }
+  .line.tool::after { content: ""; height: 6px; width: 50%; border-radius: 3px; background: #1F2831; }
+  .ask { margin-top: 12px; border: 1px solid var(--border-strong); border-radius: 8px; padding: 12px; display: grid; gap: 9px; background: var(--raised); }
+  .ask .q { height: 8px; width: 70%; border-radius: 4px; background: var(--border-strong); }
+  .ask .opt { height: 24px; border-radius: 6px; border: 1px solid var(--border); display: flex; align-items: center; padding: 0 8px; gap: 8px; }
+  .ask .opt::before { content: ""; width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--border-strong); }
+  .ask .opt i { height: 6px; width: 52%; border-radius: 3px; background: #1F2831; display: block; }
+  .ask .opt.sel { border-color: var(--border-strong); background: #131A22; }
+  .ask .opt.sel::before { background: var(--ink); border-color: var(--ink); }
+  .prompt { margin-top: 12px; height: 26px; border-radius: 6px; border: 1px solid var(--border); display: flex; align-items: center; padding: 0 10px; font: 500 12px/1 "JetBrains Mono", ui-monospace, monospace; color: var(--faint); gap: 6px; }
+  .prompt .caret { width: 7px; height: 13px; background: var(--muted); }
+  .status { position: absolute; left: 0; right: 0; bottom: 0; height: 30px; border-top: 1px solid var(--border); padding: 0 18px; display: flex; align-items: center; gap: 10px; font: 500 12px/1 "JetBrains Mono", ui-monospace, monospace; color: var(--muted); background: var(--raised); }
+  .status b { font-weight: 500; color: var(--ink); }
+  .status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
+  .status .spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--ink); animation: spin 0.9s linear infinite; animation-delay: calc(-1 * var(--t)); animation-play-state: paused; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .pane[data-state="working"] .status .dot { display: none; }
+  .pane:not([data-state="working"]) .status .spin { display: none; }
+  .pane[data-state="waiting"] .status .dot { background: var(--ink); }
+  .pane[data-state="done"] .status .dot { background: var(--body); }
+  .pane[data-state="idle"] .status .dot { background: var(--border-strong); }
+  .pane[data-state="idle"] .lines { opacity: 0.55; }
+  .pane .ask, .pane .prompt { display: none; }
+  .pane[data-state="waiting"] .ask { display: grid; }
+  .pane[data-state="idle"] .prompt { display: flex; }
+
+  /* The connector: the plugin carries one status from the window to SidePulse. */
+  .link { position: absolute; left: 720px; top: 327px; width: 80px; height: 2px; background: var(--border-strong); }
+  .link .pulse { position: absolute; top: -4px; left: -5px; width: 10px; height: 10px; border-radius: 50%; background: var(--pane); box-shadow: 0 0 12px 3px var(--pane-glow); opacity: 0; }
+  .mark { position: absolute; left: 742px; top: 308px; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; background: var(--ink-dark); border: 1px solid var(--border-strong); }
+  .mark svg { width: 24px; height: 24px; }
+  .glow { position: absolute; left: 762px; top: 328px; width: 460px; height: 460px; transform: translate(-50%, -50%); z-index: -1; background: radial-gradient(circle, var(--pane-glow) 0%, transparent 55%); }
+
+  /* SidePulse: the status it shows and its default LED programs on an eight-LED strip. */
+  .sp { position: absolute; left: 800px; top: 68px; width: 352px; height: 520px; display: grid; grid-template-rows: 1fr 1fr; gap: 16px; }
+  .card { position: relative; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); padding: 22px; }
+  .card .k { font: 500 11px/1 "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
+  .card .mode { margin-top: 44px; font: 600 32px/1.05 "Space Grotesk", system-ui, sans-serif; letter-spacing: -0.02em; color: var(--ink); }
+  .card .key { margin-top: 10px; font: 500 13px/1.4 "JetBrains Mono", ui-monospace, monospace; color: var(--pane); }
+  .card .note { margin-top: 10px; font: 500 14px/1.45 "Space Grotesk", system-ui, sans-serif; color: var(--muted); }
+  .card .sess { position: absolute; left: 22px; right: 22px; bottom: 20px; display: flex; justify-content: space-between; font: 500 11.5px/1 "JetBrains Mono", ui-monospace, monospace; color: var(--faint); letter-spacing: 0.04em; }
+  .device { display: grid; align-content: center; justify-items: center; gap: 20px; }
+  .device .k { position: absolute; left: 22px; top: 22px; }
+  .edge { position: relative; width: 300px; height: 64px; margin-top: 26px; border-radius: 10px; background: linear-gradient(180deg, #D9DDE2 0%, #B9BEC5 55%, #8F959D 100%); box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.25), 0 14px 30px -16px rgba(0, 0, 0, 0.9); }
+  .edge::before { content: ""; position: absolute; left: 22px; right: 22px; top: 24px; height: 16px; border-radius: 8px; background: #0A0C0E; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.9); }
+  .leds { position: absolute; left: 30px; right: 30px; top: 27px; height: 10px; display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; }
+  .led { height: 10px; border-radius: 5px; background: #111518; --c: var(--led-cyan); animation-delay: calc(-1 * var(--t)) !important; animation-play-state: paused !important; }
+  /* cyan-roll-8.LED: each LED pulses #00E5FF over 760 ms, 95 ms behind its neighbour. The delays stay
+     negative (the program has always been running), offset so t=0 shows the wave mid-roll. */
+  .leds[data-prog="cyan-roll"] .led { animation: roll 760ms ease-in-out infinite; }
+  .leds[data-prog="cyan-roll"] .led:nth-child(1) { animation-delay: calc(-1 * var(--t) - 1140ms + 0ms) !important; }
+  .leds[data-prog="cyan-roll"] .led:nth-child(2) { animation-delay: calc(-1 * var(--t) - 1140ms + 95ms) !important; }
+  .leds[data-prog="cyan-roll"] .led:nth-child(3) { animation-delay: calc(-1 * var(--t) - 1140ms + 190ms) !important; }
+  .leds[data-prog="cyan-roll"] .led:nth-child(4) { animation-delay: calc(-1 * var(--t) - 1140ms + 285ms) !important; }
+  .leds[data-prog="cyan-roll"] .led:nth-child(5) { animation-delay: calc(-1 * var(--t) - 1140ms + 380ms) !important; }
+  .leds[data-prog="cyan-roll"] .led:nth-child(6) { animation-delay: calc(-1 * var(--t) - 1140ms + 475ms) !important; }
+  .leds[data-prog="cyan-roll"] .led:nth-child(7) { animation-delay: calc(-1 * var(--t) - 1140ms + 570ms) !important; }
+  .leds[data-prog="cyan-roll"] .led:nth-child(8) { animation-delay: calc(-1 * var(--t) - 1140ms + 665ms) !important; }
+  @keyframes roll { 0%, 100% { background: #111518; box-shadow: none; } 50% { background: var(--led-cyan); box-shadow: 0 0 10px 2px rgba(0, 229, 255, 0.75), 0 0 28px 6px rgba(0, 229, 255, 0.25); } }
+  /* amber-pulse.LED: off, then #FF3A00 over a 1.6 s pulse, repeated. */
+  .leds[data-prog="amber-pulse"] .led { --c: var(--led-amber); animation: amber 1.6s ease-in-out infinite; }
+  @keyframes amber { 0%, 100% { background: #111518; box-shadow: none; } 50% { background: var(--led-amber); box-shadow: 0 0 10px 2px rgba(255, 58, 0, 0.75), 0 0 28px 6px rgba(255, 58, 0, 0.25); } }
+  /* solid-green.LED: #00FF66. */
+  .leds[data-prog="solid-green"] .led { background: var(--led-green); box-shadow: 0 0 10px 2px rgba(0, 255, 102, 0.75), 0 0 28px 6px rgba(0, 255, 102, 0.25); }
+  /* idle-pulse-8.LED: off for 2 s, then LEDs 2–5 ease to #006060 #00E5FF #00E5FF #006060 over 2 s, repeated. */
+  .leds[data-prog="idle-pulse"] .led { animation: idle 4s ease-in-out infinite; }
+  .leds[data-prog="idle-pulse"] .led:nth-child(3), .leds[data-prog="idle-pulse"] .led:nth-child(6) { --c: var(--led-dim); }
+  .leds[data-prog="idle-pulse"] .led:nth-child(1), .leds[data-prog="idle-pulse"] .led:nth-child(2), .leds[data-prog="idle-pulse"] .led:nth-child(7), .leds[data-prog="idle-pulse"] .led:nth-child(8) { animation: none; }
+  @keyframes idle { 0%, 50%, 100% { background: #111518; box-shadow: none; } 75% { background: var(--c); box-shadow: 0 0 10px 2px color-mix(in srgb, var(--c) 60%, transparent); } }
+  .device .prog { font: 500 12.5px/1.4 "JetBrains Mono", ui-monospace, monospace; color: var(--muted); }
+  .device .prog b { color: var(--body); font-weight: 500; }
+
+  .foot { position: absolute; left: 48px; right: 48px; bottom: 30px; display: grid; gap: 12px; font: 500 12px/1 "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.04em; color: var(--faint); }
+  .foot .row { display: flex; align-items: center; justify-content: space-between; }
+  .foot .brand { gap: 10px; color: var(--body); font: 600 14px/1 "Space Grotesk", system-ui, sans-serif; letter-spacing: -0.015em; }
+  .foot .brand svg { width: 18px; height: 18px; }
+  .foot .legal { font: 500 10.5px/1 "Space Grotesk", system-ui, sans-serif; letter-spacing: 0; color: var(--faint); }
+</style>
+</head>
+<body>
+<div class="canvas">
+  <div class="glow"></div>
+  <div class="eyebrow l">Tern window · two Oh My Pi (OMP) panes</div>
+  <div class="eyebrow r">SidePulse · what this plugin sends</div>
+
+  <div class="win">
+    <div class="titlebar"><i></i><i></i><i></i>
+      <div class="tabs"><span class="tab on">omp</span><span class="tab plus">+</span></div>
+    </div>
+    <div class="panes">
+      <section class="pane" id="A">
+        <div class="head"><span>pane 1 · omp</span><span>local</span></div>
+        <div class="lines" id="LA"></div>
+        <div class="ask"><div class="q"></div><div class="opt sel"><i></i></div><div class="opt"><i></i></div></div>
+        <div class="prompt">›<span class="caret"></span></div>
+        <div class="status"><span class="spin"></span><span class="dot"></span><b class="word"></b></div>
+      </section>
+      <section class="pane" id="B">
+        <div class="head"><span>pane 2 · omp</span><span>remote host</span></div>
+        <div class="lines" id="LB"></div>
+        <div class="ask"><div class="q"></div><div class="opt sel"><i></i></div><div class="opt"><i></i></div></div>
+        <div class="prompt">›<span class="caret"></span></div>
+        <div class="status"><span class="spin"></span><span class="dot"></span><b class="word"></b></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="link"><div class="pulse" id="pulse"></div></div>
+  <div class="mark"><svg viewBox="0 0 96 96" aria-hidden="true"><rect x="12" y="16" width="72" height="10" rx="2" fill="#E8ECEF"/><rect x="43" y="26" width="10" height="54" rx="2" fill="#E8ECEF"/><circle cx="68" cy="54" r="8" fill="#70B3F7"/></svg></div>
+
+  <div class="sp">
+    <div class="card">
+      <div class="k">SidePulse status</div>
+      <div class="mode" id="mode"></div>
+      <div class="key" id="key"></div>
+      <div class="note" id="note"></div>
+      <div class="sess"><span>origin · Tern</span><span>one combined session</span></div>
+    </div>
+    <div class="card device">
+      <div class="k">SidePulse Pro · default programs</div>
+      <div class="edge"><div class="leds" id="leds"><i class="led"></i><i class="led"></i><i class="led"></i><i class="led"></i><i class="led"></i><i class="led"></i><i class="led"></i><i class="led"></i></div></div>
+      <div class="prog" id="prog"></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="row">
+      <span class="brand"><svg viewBox="0 0 96 96" aria-hidden="true"><rect x="12" y="16" width="72" height="10" rx="2" fill="#E8ECEF"/><rect x="43" y="26" width="10" height="54" rx="2" fill="#E8ECEF"/><circle cx="68" cy="54" r="8" fill="#70B3F7"/></svg>tern-sidepulse</span>
+      <span>synthetic illustration · no real sessions, prompts, or transcripts</span>
+    </div>
+    <div class="row legal"><span>Community project; not affiliated with or endorsed by the Oh My Pi, Tern, or SidePulse maintainers.</span><span>durations compressed · a socket write is not an LED check</span></div>
+  </div>
+</div>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  if (params.get("probe") === "fonts") {
+    document.fonts.ready.then(() => {
+      const ok = document.fonts.check('600 32px "Space Grotesk"') && document.fonts.check('500 13px "JetBrains Mono"');
+      document.body.dataset.fonts = ok ? "ok" : "missing";
+    });
+  }
+  const t = Math.max(0, parseFloat(params.get("t") || "0"));
+  document.documentElement.style.setProperty("--t", t + "s");
+  const LAG = 0.6; // the pulse travels the connector, then SidePulse updates
+  // [start, pane 1, pane 2, SidePulse mode, status key, note, LED program, program label]
+  const SCENES = [
+    [0,    "working", "idle",    "Working",           "working",           "Your configured working animation, while any visible pane works.", "cyan-roll",   "Cyan Roll · working"],
+    [3,    "working", "waiting", "Waiting for input", "waiting_for_input", "An ask or an approval. Outranks working while any pane waits.",     "amber-pulse", "Amber Pulse · waiting for input"],
+    [7,    "working", "working", "Working",           "working",           "The ask was answered; both panes work.",                              "cyan-roll",   "Cyan Roll · working"],
+    [9,    "working", "done",    "Working",           "working",           "One turn finished; working still outranks it.",                      "cyan-roll",   "Cyan Roll · working"],
+    [10.5, "done",    "done",    "Completed",         "completed",         "Both turns finished. Held for 15 s, unless a session resumes first.", "solid-green", "Solid Green · completed"],
+    [13.5, "idle",    "idle",    "Idle / Ready",      "idle_ready",        "Nothing visible, or all idle: this plugin's status is cleared.",      "idle-pulse",  "Idle Pulse · idle / ready"],
+  ];
+  const WORD = { working: "working", waiting: "waiting for input", done: "done", idle: "idle" };
+  let cur = SCENES[0], prev = null, since = 0;
+  for (const s of SCENES) { if (t >= s[0]) { prev = cur === s ? prev : cur; cur = s; since = t - s[0]; } }
+  const lagging = since < LAG && cur !== SCENES[0] && prev !== null && prev[4] !== cur[4];
+  const shown = lagging ? prev : cur;
+  const A = document.getElementById("A"), B = document.getElementById("B");
+  A.dataset.state = cur[1]; B.dataset.state = cur[2];
+  A.querySelector(".word").textContent = WORD[cur[1]]; B.querySelector(".word").textContent = WORD[cur[2]];
+  document.getElementById("mode").textContent = shown[3];
+  document.getElementById("key").textContent = shown[4];
+  document.getElementById("note").textContent = shown[5];
+  document.getElementById("leds").dataset.prog = shown[6];
+  const label = shown[7].split(" · ");
+  const prog = document.getElementById("prog");
+  const strong = document.createElement("b"); strong.textContent = label[0];
+  prog.replaceChildren(strong, document.createTextNode(" · " + label[1]));
+  const pulse = document.getElementById("pulse");
+  if (lagging) { const p = since / LAG; pulse.style.opacity = String(1 - Math.pow(p, 3)); pulse.style.left = (-5 + p * 80) + "px"; }
+
+  // Transcript skeletons: fixed line scripts revealed over each pane's working time. Widths are percentages.
+  const WA = [62, 84, "tool", 48, 72, 90, "tool", 36, 58, 80, 44, "tool", 66, 52, 78, 40, 70, 34];
+  const WB = [70, 46, "tool", 58, 82, 38, 64, "tool", 50, 76, 42];
+  function fill(el, script, n, hotEvery) {
+    el.replaceChildren();
+    for (let i = 0; i < Math.min(n, script.length); i++) {
+      const d = document.createElement("div");
+      if (script[i] === "tool") d.className = "line tool";
+      else { d.className = "line" + (i % hotEvery === hotEvery - 1 ? " hot" : ""); d.style.width = script[i] + "%"; }
+      el.appendChild(d);
+    }
+  }
+  // Pane 1 works from t=0 on four seed lines; pane 2 idles on three, waits, then works from t=7.
+  const aLines = cur[1] === "working" ? 4 + Math.floor(t * 1.6) : cur[1] === "done" || cur[1] === "idle" ? WA.length : 4;
+  const bLines = t < 7 ? 3 : cur[2] === "working" ? 3 + Math.floor((t - 7) * 2.4) : WB.length;
+  fill(document.getElementById("LA"), WA, aLines, 5);
+  fill(document.getElementById("LB"), WB, bLines, 4);
+  for (const caret of document.querySelectorAll(".caret")) caret.style.opacity = (t % 1) < 0.5 ? "1" : "0";
+})();
+</script>
+</body>
+</html>
