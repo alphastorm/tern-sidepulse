@@ -10,10 +10,13 @@ behavior claims are backed by evidence, privacy boundaries stay intact, and the 
 - **Python 3.10 or later**: the runtime (`bridge.py`, `tern_sidepulse/`) and test suite (`tests/`) use the Python
   standard library only (compatible with Python 3.10+, so do not import `tomllib`). Nothing is installed with `pip`,
   and the repository uses no Node or Bun dependencies.
-- **`luau-lsp` 1.70.1**: analyzes `window.luau` against `types/tern.d.luau` (the `tern plugin types` output from Tern
-  0.9.12; release archives are published at
-  [JohnnyMorganz/luau-lsp v1.70.1](https://github.com/JohnnyMorganz/luau-lsp/releases/tag/1.70.1), as in
-  [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+- **`luau-lsp` 1.70.1 and `luau` 0.745**: `luau-lsp` analyzes `window.luau` against `types/tern.d.luau` (the
+  `tern plugin types` output from Tern 0.9.12; release archives at
+  [JohnnyMorganz/luau-lsp v1.70.1](https://github.com/JohnnyMorganz/luau-lsp/releases/tag/1.70.1)), and `luau` runs
+  `window.luau` headlessly in `tests/test_luau_harness.py` (release archives at
+  [luau-lang/luau 0.745](https://github.com/luau-lang/luau/releases/tag/0.745), as in
+  [`.github/workflows/ci.yml`](.github/workflows/ci.yml); set `LUAU=/path/to/luau` when not on `PATH`, or
+  `TERN_SIDEPULSE_REQUIRE_LUAU=1` to fail instead of skipping when `luau` is absent).
 - **Tern 0.9.12 on macOS**: required only for manual end-to-end checks against a live Tern window and SidePulse's agent
   monitor (`events.sock` and `relay-events.sock`); see [`docs/compatibility.md`](docs/compatibility.md) for the probe
   and integration checks.
@@ -52,13 +55,19 @@ to run `tests/test_sidepulse_contract.py` against the installed SidePulse normal
 ## Invariants and documentation standards
 
 1. **Standard library only**: do not add third-party Python packages, external runtime tools, or network calls.
-2. **Privacy invariants (`tests/test_privacy.py`)**: the window observer (`window.luau`) reads only `pane`, `state`,
-   `kind`, `program`, `host`, and `alive` from `cx.agents:list()`, `id`, `state`, `panes`, and `kind` from
-   `cx.hosts:list()`, and `surface.role` from `cx.session:surface(pane, {nodes = 1, depth = 1})`. It never reads pane
-   titles, working directories, model names, prompts, assistant text, tool arguments, or transcript paths.
-   `tests/test_privacy.py` pins that extra client fields never leave the coordinator, `doctor.json` filters window
-   diagnostics to known integer counters, and the SidePulse socket payload carries only the eight fixed protocol keys
-   (where `"prompt"` is always the constant label `"OMP in Tern"`, never user prompt text).
+2. **Privacy invariants (`tests/test_privacy.py`, `tests/test_rows.py`)**: the window observer (`window.luau`) reads
+   only `pane`, `state`, `kind`, `program`, `host`, and `alive` from `cx.agents:list()`; `id`, `state`, `panes`, `kind`,
+   `address`, and `name` from `cx.hosts:list()`; `surface.role` from `cx.session:surface(pane, {nodes = 1, depth = 1})`;
+   and, at most once per 5 s pass when the window has at least one OMP pane, `pane`, `tab`, and `title` from
+   `cx.session:panes()` and `id` and `name` from `cx.session:tabs()`. Labels come only from user-given tab names
+   (`TabInfo.name`) and OMP panes' own `PaneInfo.title` (never `TabInfo.title`), and the plugin never reads working
+   directories, model names, commands, prompts, assistant text, tool arguments, or transcript paths. Labels and host
+   keys stay in the coordinator's memory only: they are never logged in `coordinator.log`, persisted to disk, returned
+   by `bridge.py status` or `doctor.json`, echoed in coordinator acknowledgements or rejections, or sent to SidePulse by
+   the hook-event transport. `tests/test_privacy.py` pins that sentinels in labels, host keys, and extra client fields
+   never leave the coordinator, `doctor.json` filters window diagnostics to allow-listed integer counters, and the
+   SidePulse socket payload's `line` object carries only its seven fixed status keys plus `"prompt"` on `working`
+   events (where `"prompt"` is always the constant `"OMP in Tern"`, never user prompt text or a pane label).
 3. **Exact versions in documentation**: compatibility and behavior claims in `README.md` and
    [`docs/compatibility.md`](docs/compatibility.md) name the exact Tern, OMP, SidePulse, and macOS versions they were
    exercised against, and never describe a local socket write as physical LED output.

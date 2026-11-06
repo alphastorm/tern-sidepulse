@@ -174,15 +174,15 @@
     <div class="section-head">
       <div>
         <p class="eyebrow">Private by design</p>
-        <h2>Six fields in, one status out.</h2>
+        <h2>Six agent fields in, one status out.</h2>
       </div>
-      <p>The plugin never reads pane titles, working directories, model names, prompts, assistant text, tool arguments, or transcript paths.</p>
+      <p>The plugin never reads working directories, model names, prompts, assistant text, tool arguments, or transcript paths. OMP tab names and pane titles stay in the coordinator's memory and are never logged or sent to SidePulse.</p>
     </div>
     <ul class="grid three">
-      <li><h3>Reads six fields, never transcripts</h3><p><code>pane</code>, <code>state</code>, <code>kind</code>, <code>program</code>, <code>host</code>, <code>alive</code> from each agent row. Host membership and each pane's <code>surface.role</code> identify connected OMP panes. <a href="https://github.com/alphastorm/tern-sidepulse/blob/main/tests/test_privacy.py"><code>tests/test_privacy.py</code></a> pins what is read.</p></li>
+      <li><h3>Reads six agent fields, never transcripts</h3><p><code>pane</code>, <code>state</code>, <code>kind</code>, <code>program</code>, <code>host</code>, <code>alive</code> from each agent row, plus host keys and each pane's <code>surface.role</code>. OMP tab names and pane titles stay in coordinator memory only (<a href="https://github.com/alphastorm/tern-sidepulse/blob/main/tests/test_privacy.py"><code>tests/test_privacy.py</code></a>).</p></li>
       <li><h3>Nothing listens on the network</h3><p>The helper, coordinator, and SidePulse receivers communicate through private local sockets. Live observations stay in memory only; a restart never replays a stale prompt.</p></li>
       <li><h3>Private local files and sockets</h3><p><code>~/.local/state/tern-sidepulse</code> has mode <code>0700</code>; ownership is checked and symlinks are refused. Runtime and state files are written with mode <code>0600</code>.</p></li>
-      <li><h3>Bounded requests and state</h3><p>Requests are capped at 256 KiB, with at most 32 concurrent connections. State is capped at 64 windows and 512 panes per window.</p></li>
+      <li><h3>Bounded requests and state</h3><p>Window snapshots are budgeted to 192 KiB and coordinator requests are capped at 1 MiB across at most 32 concurrent connections. State is capped at 64 windows and 512 panes per window.</p></li>
       <li><h3>Isolated helper execution</h3><p>Argument vectors, never a shell; <code class="nowrap">-I -S</code> isolation and a 4 s timeout. Failed calls back off at <code>500 · 2ⁿ</code> ms, capped at 30 s.</p></li>
       <li><h3>Remote hosts need nothing installed</h3><p>No SidePulse, no helper, and no service on a remote host. OMP sessions are observed through the open Tern window connected to that host.</p></li>
     </ul>
@@ -251,7 +251,7 @@ tern plugin reload tern-sidepulse</code></pre></div>
     </div>
     <ul class="evidence">
       <li><span class="k">Exercised</span><span class="v">Tern 0.9.12 (<code>e498b49</code>) · OMP 18.16.0</span><span class="s">SidePulse revision <code>ffb1d3c2</code> (<code>0.2.4.dev6+gffb1d3c2f</code>), macOS 27.2 on Apple Silicon, and a remote Mac Studio over Tern remoting; a 78 s sleep/wake, a full Tern quit and relaunch, and a remote disconnect/reconnect, each read from the coordinator log and SidePulse's own state files.</span></li>
-      <li><span class="k">Automated</span><span class="v">Unit and integration suite on Python 3.10 and 3.13 in CI</span><span class="s">Plus <code>luau-lsp</code> analysis of <code>window.luau</code>.</span></li>
+      <li><span class="k">Automated</span><span class="v">Unit and integration suite on Python 3.10 and 3.13 in CI</span><span class="s">Plus <code>luau-lsp</code> analysis and the headless Luau 0.745 harness for <code>window.luau</code>.</span></li>
       <li><span class="k">Not yet exercised</span><span class="v">A remote host that stays listed but drops to a non-connected state</span><span class="s">And the two-window close-one case with OMP sessions in both windows.</span></li>
     </ul>
     <p class="small section-note">Timings come from socket and state-file records; a socket write is not an LED check. Read the <a href="https://github.com/alphastorm/tern-sidepulse/blob/main/docs/compatibility.md">compatibility and contract probe</a>.</p>

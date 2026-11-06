@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Per-pane rows in the coordinator (`tern_sidepulse/coordinator.py`, `tern_sidepulse/reducer.py`): observations are keyed by `(host, pane)` (`local`, or a remote host's `address`, `name`, or `id:<n>`) and deduplicated across windows by mode priority (`blocked_error`, `waiting_for_input`, `working`, `completed`, `idle_ready`) and newest label, while the SidePulse hook-event transport continues to emit one combined session (`OMP in Tern`).
+- In-memory session labels (`window.luau`, `tern_sidepulse/reducer.py`, `tests/test_privacy.py`, `tests/test_rows.py`): when a window has at least one OMP pane, `window.luau` reads `cx.session:panes()` and `cx.session:tabs()` at most once per 5 s pass and labels each OMP pane from its user-given tab name (`TabInfo.name`) or its own `PaneInfo.title` (cut to 256 UTF-8 bytes in the window and sanitized in the coordinator to at most 96 characters without control, surrogate, or private-use characters). Labels and host keys stay in coordinator memory only and never appear in `coordinator.log`, `doctor.json`, `bridge.py status`, coordinator acknowledgements, or the SidePulse payload (`status` and `doctor` report row counts and allow-listed diagnostic counters only).
+- Snapshot budget and request limits (`window.luau`, `tern_sidepulse/limits.py`): the window keeps each encoded snapshot within 192 KiB by dropping labels and retrying once (`labels_dropped`), host keys are capped at 128 bytes in the window and 128 characters in the coordinator, and the coordinator request cap is raised from 256 KiB to 1 MiB.
+- Headless Luau window harness (`tests/luau/`, `tests/test_luau_harness.py`, `.github/workflows/ci.yml`): runs the real `window.luau` under the `luau` 0.745 CLI across the backoff/interpreter/latch/role test drive (`drive_backoff.luau`, scenarios A–G), the label and host-key drive (`drive_labels.luau`, scenarios L1–L12), and the snapshot-budget drive (`drive_budget.luau`, scenarios B1–B3), bringing the suite to 155 unit and integration tests.
+
 ## 0.1.0 — 2026-11-05
 
 First release.
