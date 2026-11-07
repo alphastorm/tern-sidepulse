@@ -16,7 +16,9 @@ behavior claims are backed by evidence, privacy boundaries stay intact, and the 
   `window.luau` headlessly in `tests/test_luau_harness.py` (release archives at
   [luau-lang/luau 0.745](https://github.com/luau-lang/luau/releases/tag/0.745), as in
   [`.github/workflows/ci.yml`](.github/workflows/ci.yml); set `LUAU=/path/to/luau` when not on `PATH`, or
-  `TERN_SIDEPULSE_REQUIRE_LUAU=1` to fail instead of skipping when `luau` is absent).
+  `TERN_SIDEPULSE_REQUIRE_LUAU=1` to fail instead of skipping when `luau` is absent). An Oh My Pi session started at
+  the repository root runs the same analysis while editing: [`.omp/lsp.json`](.omp/lsp.json) launches `luau-lsp lsp`
+  with these definitions on the standard (non-Roblox) platform, for diagnostics and hover on `.luau` files.
 - **Tern 0.9.12 on macOS**: required only for manual end-to-end checks against a live Tern window and SidePulse's agent
   monitor (`events.sock` and `relay-events.sock`); see [`docs/compatibility.md`](docs/compatibility.md) for the probe
   and integration checks.
