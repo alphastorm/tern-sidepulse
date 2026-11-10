@@ -21,11 +21,11 @@ SPAWN_SPACING = 0.3
 class Settings:
     data_dir: Path | None
     runtime_dir: Path
-    ui_sockets: tuple[Path, ...]
-    service_sockets: tuple[Path, ...]
+    program_sockets: tuple[Path, ...]
     limits: Limits
     bridge_path: Path
     limits_json: str | None = None
+    labels: bool = True
 
     @property
     def socket_path(self) -> Path:
@@ -71,10 +71,8 @@ def coordinator_argv(settings: Settings) -> list[str]:
     argv = [sys.executable, *python_flags(settings.data_dir), str(settings.bridge_path), "coordinator", "--runtime-dir", str(settings.runtime_dir)]
     if settings.data_dir is not None:
         argv += ["--data-dir", str(settings.data_dir)]
-    for path in settings.ui_sockets:
-        argv += ["--ui-socket", str(path)]
-    for path in settings.service_sockets:
-        argv += ["--service-socket", str(path)]
+    for path in settings.program_sockets:
+        argv += ["--program-socket", str(path)]
     if settings.limits_json:
         argv += ["--limits", settings.limits_json]
     return argv

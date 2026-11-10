@@ -1,3 +1,4 @@
+import hashlib
 import os
 import shutil
 import socket
@@ -13,9 +14,8 @@ from tern_sidepulse.paths import (
     TEMP_SOCKET_SUFFIX_MAX,
     ensure_private_dir,
     runtime_dir,
-    sidepulse_relay_socket_for_dir,
-    sidepulse_service_sockets,
-    sidepulse_ui_sockets,
+    sidepulse_program_socket_for_dir,
+    sidepulse_program_sockets,
 )
 
 
@@ -73,21 +73,44 @@ class RuntimeDirTest(unittest.TestCase):
 
 
 class SidePulsePathsTest(unittest.TestCase):
-    def test_relay_socket_long_path_fallback(self):
+    def test_program_socket_short_path_and_96_byte_boundary(self):
         short = Path("/tmp/x")
-        self.assertEqual(sidepulse_relay_socket_for_dir(short), short / "relay-events.sock")
-        long = Path("/Users/" + "a" * 80 + "/.local/state/sidepulse/agent-monitor")
-        fallback = sidepulse_relay_socket_for_dir(long)
-        self.assertTrue(str(fallback).startswith("/tmp/sidepulse-relay-"))
-        self.assertTrue(str(fallback).endswith(".sock"))
+        self.assertEqual(sidepulse_program_socket_for_dir(short), short / "program-status.sock")
+        boundary = Path("/" + "a" * 75)
+        self.assertEqual(len(str(boundary / "program-status.sock").encode("utf-8")), 96)
+        self.assertEqual(sidepulse_program_socket_for_dir(boundary), boundary / "program-status.sock")
+
+    def test_program_socket_long_path_fallback_matches_upstream_hash(self):
+        directory = Path("/" + "a" * 76)
+        path = directory / "program-status.sock"
+        digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
+        with mock.patch("tern_sidepulse.paths.os.getuid", return_value=123):
+            fallback = sidepulse_program_socket_for_dir(directory)
+        self.assertEqual(fallback, Path("/tmp/sidepulse-status-123") / f"{digest}.sock")
+        self.assertRegex(str(fallback), r"^/tmp/sidepulse-status-123/[0-9a-f]{16}\.sock$")
+
+    def test_program_socket_counts_utf8_bytes_not_characters(self):
+        directory = Path("/" + "é" * 38)
+        path = directory / "program-status.sock"
+        self.assertLess(len(str(path)), 96)
+        digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
+        self.assertEqual(sidepulse_program_socket_for_dir(directory), Path(f"/tmp/sidepulse-status-{os.getuid()}/{digest}.sock"))
 
     def test_candidates_follow_xdg_then_home(self):
         home = Path("/home/u")
-        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": "/xdg"}):
-            ui = sidepulse_ui_sockets()
-            self.assertEqual(ui[0], Path("/xdg/sidepulse/agent-monitor/events.sock"))
-            self.assertEqual(ui[-1], Path.home() / ".local/state/sidepulse/agent-monitor/events.sock")
-        self.assertEqual(sidepulse_service_sockets(home), (home / ".local/state/sidepulse/agent-monitor/relay-events.sock",))
+        fallback = home / ".local/state/sidepulse/agent-monitor/program-status.sock"
+        with mock.patch("tern_sidepulse.paths.Path.home", return_value=home):
+            with mock.patch.dict(os.environ, {"XDG_STATE_HOME": "/xdg"}):
+                self.assertEqual(sidepulse_program_sockets(), (Path("/xdg/sidepulse/agent-monitor/program-status.sock"), fallback))
+                self.assertEqual(sidepulse_program_sockets(home), (fallback,), "an explicit home bypasses XDG")
+            with mock.patch.dict(os.environ, {}, clear=True):
+                self.assertEqual(sidepulse_program_sockets(), (fallback,))
+
+    def test_duplicate_xdg_home_candidate_is_not_repeated(self):
+        home = Path("/home/u")
+        with mock.patch("tern_sidepulse.paths.Path.home", return_value=home):
+            with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(home / ".local/state")}):
+                self.assertEqual(sidepulse_program_sockets(), (home / ".local/state/sidepulse/agent-monitor/program-status.sock",))
 
 
 if __name__ == "__main__":

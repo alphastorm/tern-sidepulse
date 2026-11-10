@@ -1,6 +1,6 @@
 import unittest
 
-from tests.helpers import activate, advance, combined_mode, idle, make_coordinator, register, rows, snapshot, waiting, working
+from tests.helpers import activate, advance, combined_mode, idle, make_coordinator, register, rows, scope, snapshot, waiting, working
 
 from tern_sidepulse.limits import Limits
 from tern_sidepulse.reducer import LABEL_MAX_CHARS, Observation, Row, reduce_rows, sanitize_label
@@ -113,7 +113,8 @@ class CrossObserverTest(unittest.TestCase):
         activate(c, [working(1, label="First")])
         activate(c, [waiting(1, label="Second")], observer=OTHER)
         self.assertEqual(rows(c), [("local", "1", "waiting_for_input", "Second")])
-        self.assertEqual(sender.modes_for("events.sock"), ["idle_ready", "working", "waiting_for_input"])
+        self.assertEqual(sender.states(), ["working", "blocked"])
+        self.assertEqual(sender.shown(), {scope(1): ("blocked", "Second")})
 
     def test_moving_session_never_doubles(self):
         c, _, sender, _, _ = make_coordinator()
@@ -124,7 +125,8 @@ class CrossObserverTest(unittest.TestCase):
         self.assertEqual(rows(c), [("local", "1", "working", None)])
         snapshot(c, gen_b, epoch, 2, [], observer=OTHER)
         self.assertEqual(c.rows, ())
-        self.assertEqual(sender.modes_for("events.sock"), ["idle_ready", "working", "idle_ready"])
+        self.assertEqual(sender.states(), ["working", "clear"])
+        self.assertEqual(sender.shown(), {})
 
     def test_uncertain_observer_contributes_no_rows(self):
         c, clock, _, _, _ = make_coordinator()
@@ -153,7 +155,8 @@ class CrossObserverTest(unittest.TestCase):
         self.assertEqual(rows(c), [("local", "1", "working", None)])
         snapshot(c, gen_a, epoch, 2, [])
         self.assertEqual(rows(c), [("local", "1", "completed", None)])
-        self.assertEqual(sender.modes_for("events.sock"), ["idle_ready", "working", "completed"])
+        self.assertEqual(sender.states(), ["working", "done"])
+        self.assertEqual(sender.shown(), {scope(1): ("done", "OMP in Tern")})
 
 
 class LabelPrecedenceTest(unittest.TestCase):
@@ -207,13 +210,19 @@ class LabelPrecedenceTest(unittest.TestCase):
         self.assertEqual(ack["error"], "expired_generation")
         self.assertEqual(rows(c), [("local", "1", "working", "Replacement")])
 
-    def test_label_change_alone_sends_nothing(self):
+    def test_label_change_alone_updates_exactly_one_report(self):
         c, _, sender, _, _ = make_coordinator()
         gen, epoch = activate(c, [working(1, label="\U000f1517 Original")])
-        sent = list(sender.sent)
+        original = sender.reports[0]
         snapshot(c, gen, epoch, 2, [working(1, label="\uf412 Renamed")])
         self.assertEqual(rows(c), [("local", "1", "working", "Renamed")])
-        self.assertEqual(sender.sent, sent)
+        self.assertEqual(len(sender.reports), 2)
+        renamed = sender.reports[1]
+        self.assertEqual(renamed["scope"], original["scope"])
+        self.assertNotEqual(renamed["request_id"], original["request_id"])
+        self.assertEqual(sender.shown(), {scope(1): ("working", "Renamed")})
+        snapshot(c, gen, epoch, 3, [working(1, label="\uf412 Renamed")])
+        self.assertEqual(len(sender.reports), 2, "an unchanged label does not resend")
 
     def test_withdrawn_observation_label_ignored(self):
         c, _, _, _, _ = make_coordinator()
@@ -290,7 +299,10 @@ class WireValidationTest(unittest.TestCase):
         self.assertEqual(disabled["rows"], {})
         self.assertEqual(disabled["summary"], "no rows")
         self.assertNotIn("desired", disabled)
-        self.assertEqual(sender.modes_for("events.sock"), ["idle_ready", "waiting_for_input", "waiting_for_input", "idle_ready"])
+        self.assertEqual(resync["delivery"], {"program_status": {"rows": 3, "pending": 0, "error": None}})
+        self.assertEqual(disabled["delivery"], {"program_status": {"rows": 0, "pending": 0, "error": None}})
+        self.assertEqual(sender.states(), ["blocked", "working", "working"] * 2 + ["clear"] * 3)
+        self.assertEqual(sender.shown(), {})
 
 
 if __name__ == "__main__":

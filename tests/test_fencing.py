@@ -1,6 +1,6 @@
 import unittest
 
-from tests.helpers import OBS, activate, combined_mode, idle, make_coordinator, register, snapshot, working
+from tests.helpers import OBS, activate, combined_mode, idle, make_coordinator, register, scope, snapshot, working
 
 from tern_sidepulse import VERSION
 from tern_sidepulse.coordinator import ProtocolError, decode_request
@@ -75,12 +75,15 @@ class FencingTest(unittest.TestCase):
         self.assertEqual(combined_mode(c), "idle_ready")
         self.assertEqual(c.rows, ())
         self.assertEqual(c.status()["rows"], {})
+        self.assertEqual(sender.shown(), {})
+        self.assertEqual(sender.states(), ["working", "clear"])
         self.assertEqual(snapshot(c, gen, epoch, 2, [working(1)])["error"], "disabled")
         self.assertEqual(register(c)["error"], "disabled")
         c.handle({"schema": 1, "op": "enable"})
         activate(c, [working(1)])
         self.assertEqual(combined_mode(c), "working")
-        self.assertEqual(sender.modes_for("relay-events.sock")[-2:], ["idle_ready", "working"])
+        self.assertEqual(sender.states(), ["working", "clear", "working"])
+        self.assertEqual(sender.shown(), {scope(1): ("working", "OMP in Tern")})
 
     def test_token_eviction_and_bounded_bookkeeping(self):
         c, _, _, _, _ = make_coordinator(Limits(max_tokens=8))

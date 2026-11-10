@@ -6,8 +6,9 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from tests.helpers import BRIDGE, FakeReceiver, kill_coordinator, run_bridge, short_tmpdir, subprocess_env
+from tests.helpers import BRIDGE, FakeProgramServer, kill_coordinator, run_bridge, short_tmpdir, subprocess_env
 
 sys.path.insert(0, str(BRIDGE.parent))
 import bridge  # noqa: E402
@@ -27,16 +28,13 @@ class VersionGuardTest(unittest.TestCase):
 class CliTest(unittest.TestCase):
     def setUp(self):
         self.tmp = short_tmpdir("tsp-cli-")
-        self.ui = FakeReceiver(self.tmp / "events.sock")
-        self.svc = FakeReceiver(self.tmp / "relay-events.sock")
-        self.ui.start()
-        self.svc.start()
-        self.env = subprocess_env(self.tmp, self.ui.path, self.svc.path, FAST)
+        self.receiver = FakeProgramServer(self.tmp / "program-status.sock")
+        self.receiver.start()
+        self.env = subprocess_env(self.tmp, self.receiver.path, FAST)
 
     def tearDown(self):
         kill_coordinator(self.env)
-        self.ui.stop()
-        self.svc.stop()
+        self.receiver.stop()
 
     def test_usage_errors_are_json(self):
         code, out, _ = run_bridge(["frobnicate"], None, self.env)
@@ -58,12 +56,13 @@ class CliTest(unittest.TestCase):
         self.assertEqual(reg["observer_key"].split(":")[1], "w2")
         pid = reg["coordinator_pid"]
         self.assertNotEqual(os.getpgid(pid), os.getpgid(0), "the coordinator lives outside the caller's process group")
-        self.assertTrue(self.ui.wait_for("idle_ready"), "startup neutral reaches the receiver")
+        self.assertEqual(self.receiver.reports, [], "registering alone does not invent a session row")
         code, ack, _ = run_bridge(["snapshot"], {"observer": {"window_key": "w2"}, "epoch": reg["epoch"], "generation": reg["generation"], "seq": 1, "coverage": "complete", "observations": [{"pane": 7, "state": "waiting_input"}]}, self.env)
         self.assertTrue(ack["accepted"], ack)
         self.assertEqual(ack["rows"], {"waiting_for_input": 1})
-        self.assertTrue(self.ui.wait_for("waiting_for_input"))
-        self.assertTrue(self.svc.wait_for("waiting_for_input"))
+        self.assertEqual(ack["delivery"], {"program_status": {"rows": 1, "pending": 0, "error": None}})
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.states() == ["blocked"]))
+        self.assertEqual(len(self.receiver.rows), 1)
 
     def test_snapshot_never_registers_on_its_own(self):
         code, reg, _ = run_bridge(["register"], {}, self.env)
@@ -86,15 +85,15 @@ class CliTest(unittest.TestCase):
         self.assertEqual(out["coordinator"], "not_running")
         self.assertFalse((data / "disabled").exists())
 
-    def test_disable_persists_latch_revokes_and_neutralizes(self):
+    def test_disable_persists_latch_revokes_and_clears(self):
         _, reg, _ = run_bridge(["register"], {}, self.env)
         run_bridge(["snapshot"], {"epoch": reg["epoch"], "generation": reg["generation"], "seq": 1, "coverage": "complete", "observations": [{"pane": 1, "state": "working"}]}, self.env)
-        self.assertTrue(self.ui.wait_for("working"))
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.states() == ["working"]))
         code, out, _ = run_bridge(["disable"], None, self.env)
         self.assertTrue(out["disabled"])
         self.assertTrue(out["latch_persisted"])
         self.assertTrue((Path(self.env["TERN_PLUGIN_DATA"]) / "disabled").exists())
-        self.assertTrue(self.ui.wait_for("idle_ready", minimum=2))
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.states() == ["working", "clear"] and not rx.rows))
         _, late, _ = run_bridge(["snapshot"], {"epoch": reg["epoch"], "generation": reg["generation"], "seq": 2, "coverage": "complete", "observations": [{"pane": 1, "state": "working"}]}, self.env)
         self.assertEqual(late["error"], "disabled")
 
@@ -130,17 +129,30 @@ class CliTest(unittest.TestCase):
             self.fail("the old coordinator did not exit")
 
     def test_settings_precedence_flag_over_env(self):
+        from tern_sidepulse.cli import parse_args, resolve_settings
+
         other = short_tmpdir("tsp-cli2-")
         code, out, _ = run_bridge(["status", "--runtime-dir", str(other)], None, self.env)
         self.assertEqual(out["detail"], "not_running")
         self.assertTrue(other.exists())
+        data = Path(self.env["TERN_PLUGIN_DATA"])
+        data.mkdir(parents=True, exist_ok=True)
+        (data / "config.json").write_text('{"program_sockets": ["/config/program-status.sock"]}')
+        with patch.dict(os.environ, self.env):
+            settings = resolve_settings(parse_args(["status", "--program-socket", "/flag/program-status.sock"]), BRIDGE)
+            self.assertEqual(settings.program_sockets, (Path("/flag/program-status.sock"),))
+            settings = resolve_settings(parse_args(["status"]), BRIDGE)
+            self.assertEqual(settings.program_sockets, (self.receiver.path,))
+            os.environ.pop("TERN_SIDEPULSE_PROGRAM_SOCKETS")
+            settings = resolve_settings(parse_args(["status"]), BRIDGE)
+            self.assertEqual(settings.program_sockets, (Path("/config/program-status.sock"),))
 
     def test_parser_grammar_matches_the_window_and_the_spawner(self):
         from tern_sidepulse.cli import UsageError, parse_args
 
-        args = parse_args(["coordinator", "--runtime-dir", "/r", "--data-dir", "/d", "--ui-socket", "/a", "--ui-socket", "/b", "--limits", "{}"])
-        self.assertEqual((args.command, args.runtime_dir, args.data_dir, args.ui_socket, args.service_socket, args.limits), ("coordinator", "/r", "/d", ["/a", "/b"], [], "{}"))
-        for argv in ([], ["--data-dir", "/d"], ["status", "--data-dir"], ["status", "--help"], ["status", "extra"]):
+        args = parse_args(["coordinator", "--runtime-dir", "/r", "--data-dir", "/d", "--program-socket", "/a", "--program-socket", "/b", "--limits", "{}"])
+        self.assertEqual((args.command, args.runtime_dir, args.data_dir, args.program_socket, args.limits), ("coordinator", "/r", "/d", ["/a", "/b"], "{}"))
+        for argv in ([], ["--data-dir", "/d"], ["status", "--data-dir"], ["status", "--help"], ["status", "extra"], ["status", "--ui-socket", "/old"], ["status", "--service-socket", "/old"]):
             with self.assertRaises(UsageError, msg=argv):
                 parse_args(argv)
         code, out, _ = run_bridge(["status", "--nope", "x"], None, self.env)
@@ -152,17 +164,17 @@ class CliTest(unittest.TestCase):
         data = Path(self.env["TERN_PLUGIN_DATA"])
         data.mkdir(parents=True, exist_ok=True)
         real = data / "real.json"
-        real.write_text('{"ui_sockets": ["/elsewhere/events.sock"]}')
+        real.write_text('{"program_sockets": ["/elsewhere/program-status.sock"]}')
         (data / "config.json").symlink_to(real)
         self.assertEqual(load_config(data), {}, "a symlinked config is ignored, as the window half ignores it")
         (data / "config.json").unlink()
         os.mkfifo(data / "config.json")
         self.assertEqual(load_config(data), {}, "a FIFO never blocks the helper")
         (data / "config.json").unlink()
-        (data / "config.json").write_text('{"ui_sockets": ["' + "/" + "x" * 70000 + '"]}')
+        (data / "config.json").write_text('{"program_sockets": ["' + "/" + "x" * 70000 + '"]}')
         self.assertEqual(load_config(data), {}, "over 64 KiB is ignored")
-        (data / "config.json").write_text('{"ui_sockets": ["/elsewhere/events.sock"]}')
-        self.assertEqual(load_config(data), {"ui_sockets": ["/elsewhere/events.sock"]})
+        (data / "config.json").write_text('{"program_sockets": ["/elsewhere/program-status.sock"]}')
+        self.assertEqual(load_config(data), {"program_sockets": ["/elsewhere/program-status.sock"]})
 
     def test_helper_caches_bytecode_under_the_data_dir(self):
         run_bridge(["status"], None, self.env)

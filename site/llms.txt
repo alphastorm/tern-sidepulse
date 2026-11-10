@@ -1,11 +1,11 @@
 # tern-sidepulse
 
-A macOS Tern window plugin that shows your Oh My Pi (OMP) sessions in SidePulse: working, waiting, done, failed.
+A macOS Tern window plugin that shows each Oh My Pi (OMP) session in your open Tern windows as its own row on SidePulse (working, waiting, done, failed, idle), named by tab or pane title (`"labels": false` in `config.json` uses `OMP in Tern`) over SidePulse's `program-status.sock` protocol.
 
 Canonical URL: https://alphastorm.github.io/tern-sidepulse/
 
 - [README: requirements, install, commands, configuration, privacy, and limitations](https://github.com/alphastorm/tern-sidepulse/blob/main/README.md)
-- [Compatibility and contract probe: exact exercised versions and untested cases](https://github.com/alphastorm/tern-sidepulse/blob/main/docs/compatibility.md)
+- [Compatibility and contract probe: exact exercised versions, program-status wire contract, and untested cases](https://github.com/alphastorm/tern-sidepulse/blob/main/docs/compatibility.md)
 - [Security policy](https://github.com/alphastorm/tern-sidepulse/blob/main/SECURITY.md)
 
 Community project; not affiliated with or endorsed by the Oh My Pi, Tern, or SidePulse maintainers.

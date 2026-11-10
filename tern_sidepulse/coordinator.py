@@ -1,8 +1,9 @@
 """The local coordinator: observer generations, leases, outcome notices and per-pane rows.
 
 One process per user holds the singleton lock and serializes every state change. Complete
-window snapshots contribute rows keyed by host and pane; the transport owns delivery and any
-protocol-specific reduction. Labels stay in memory, never in reports, logs or acknowledgements.
+window snapshots contribute rows keyed by host and pane; the transport owns delivery, including
+a crashed predecessor's rows. Labels stay in memory and leave it only in SidePulse reports (unless
+config.json sets ``"labels": false``), never in logs, acknowledgements or status.
 """
 from __future__ import annotations
 
@@ -231,9 +232,6 @@ class Coordinator:
         }
         self.stop_requested = False
         self.stop_reason: str | None = None
-        # Clear whatever a previous coordinator left under the same identity before publishing.
-        self.transport.publish((), force=True)
-        self.transport.tick()
 
     # ---- generations ----------------------------------------------------------------------
 
@@ -594,17 +592,16 @@ class Coordinator:
         self.stop_reason = reason
 
     def shutdown(self) -> None:
-        """Neutralize once on the way out; bounded by the transport's per-family budget.
+        """Clear every row this install may show, once, on the way out; bounded by the transport's tick budget.
 
         This is the last attempt this process will ever make, so retry spacing after a recent
-        failure must not skip it: a receiver that came back on the same socket would otherwise
-        keep the active mode until the next coordinator start.
+        failure must not skip it. Scopes it cannot clear stay in the ledger for the next coordinator.
         """
         for observer in list(self.observers.values()):
             self._note_retired(observer.generation, "shutdown")
         self.observers.clear()
         self.rows = ()
-        self.transport.publish((), force=not self.transport.neutral_delivered())
+        self.transport.withdraw()
         self.transport.tick(immediate=True)
 
     # ---- reporting ------------------------------------------------------------------------
@@ -657,7 +654,6 @@ class Coordinator:
             "rows": self.row_counts(),
             "rows_total": len(self.rows),
             "rows_labelled": sum(row.label is not None for row in self.rows),
-            "session_id": self.transport.session_id,
             "observers": observers,
             "tokens_outstanding": len(self.tokens),
             "generations_issued": self.generation_counter,

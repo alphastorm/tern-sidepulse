@@ -3,7 +3,7 @@ import time
 import unittest
 from pathlib import Path
 
-from tests.helpers import FakeReceiver, kill_coordinator, run_bridge, short_tmpdir, subprocess_env
+from tests.helpers import FakeProgramServer, kill_coordinator, run_bridge, short_tmpdir, subprocess_env
 
 FAST = {"lease": 3, "reaper": 0.2, "exit_grace": 1, "final_grace": 5, "done_notice": 1}
 
@@ -11,30 +11,27 @@ FAST = {"lease": 3, "reaper": 0.2, "exit_grace": 1, "final_grace": 5, "done_noti
 class EndToEndTest(unittest.TestCase):
     def setUp(self):
         self.tmp = short_tmpdir("tsp-e2e-")
-        self.ui = FakeReceiver(self.tmp / "events.sock")
-        self.svc = FakeReceiver(self.tmp / "relay-events.sock")
-        self.ui.start()
-        self.svc.start()
-        self.env = subprocess_env(self.tmp, self.ui.path, self.svc.path, FAST)
+        self.receiver = FakeProgramServer(self.tmp / "program-status.sock")
+        self.receiver.start()
+        self.env = subprocess_env(self.tmp, self.receiver.path, FAST)
 
     def tearDown(self):
         kill_coordinator(self.env)
-        self.ui.stop()
-        self.svc.stop()
+        self.receiver.stop()
 
     def send(self, reg: dict, seq: int, observations: list) -> dict:
-        _, ack, err = run_bridge(["snapshot"], {"epoch": reg["epoch"], "generation": reg["generation"], "seq": seq, "coverage": "complete", "observations": observations}, self.env)
+        code, ack, err = run_bridge(["snapshot"], {"epoch": reg["epoch"], "generation": reg["generation"], "seq": seq, "coverage": "complete", "observations": observations}, self.env)
+        self.assertEqual(code, 0, err)
         self.assertTrue(isinstance(ack, dict) and ack.get("ok"), (ack, err))
         return ack
 
-    def test_working_then_silence_neutralizes_within_bounds_and_exits(self):
+    def test_working_then_silence_clears_within_bounds_and_exits(self):
         _, reg, _ = run_bridge(["register"], {}, self.env)
         self.send(reg, 1, [{"pane": 1, "state": "working"}])
-        self.assertTrue(self.ui.wait_for("working"))
-        self.assertTrue(self.svc.wait_for("working"))
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.states() == ["working"]))
         last = time.monotonic()
-        self.assertTrue(self.ui.wait_for("idle_ready", timeout=FAST["lease"] + FAST["reaper"] + 1.0, minimum=2))
-        self.assertLessEqual(self.ui.times[-1] - last, FAST["lease"] + FAST["reaper"] + 1.0)
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.states() == ["working", "clear"] and not rx.rows, timeout=FAST["lease"] + FAST["reaper"] + 1.0))
+        self.assertLessEqual(self.receiver.times[-1] - last, FAST["lease"] + FAST["reaper"] + 1.0)
         sock = Path(self.env["TERN_SIDEPULSE_RUNTIME_DIR"]) / "coordinator.sock"
         deadline = time.monotonic() + FAST["exit_grace"] + 3
         while time.monotonic() < deadline and sock.exists():
@@ -47,46 +44,72 @@ class EndToEndTest(unittest.TestCase):
         _, reg, _ = run_bridge(["register"], {}, self.env)
         self.send(reg, 1, [{"pane": 1, "state": "working"}])
         self.send(reg, 2, [{"pane": 1, "state": "idle", "notice": {"id": "1", "kind": "done"}}])
-        self.assertTrue(self.ui.wait_for("completed"))
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.states() == ["working", "done"]))
         self.send(reg, 3, [{"pane": 1, "state": "working"}])
-        self.assertTrue(self.ui.wait_for("working", minimum=2))
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.states() == ["working", "done", "working"]))
         self.send(reg, 4, [{"pane": 1, "state": "idle", "notice": {"id": "2", "kind": "done"}}])
-        self.assertTrue(self.ui.wait_for("completed", minimum=2))
-        self.assertTrue(self.ui.wait_for("idle_ready", timeout=FAST["done_notice"] + 1.5, minimum=2), "the notice expires on its own")
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.states() == ["working", "done", "working", "done"]))
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.states() == ["working", "done", "working", "done", "idle"], timeout=FAST["done_notice"] + 1.5), "the notice expires on its own")
+        self.assertEqual(list(self.receiver.shown().values()), [("idle", "OMP in Tern")])
 
-    def test_crash_recovery_rebuilds_from_the_current_snapshot(self):
+    def test_crash_overwrites_live_scope_and_clears_closed_pane_after_the_lease(self):
         _, reg, _ = run_bridge(["register"], {}, self.env)
-        self.send(reg, 1, [{"pane": 1, "state": "working"}])
-        self.assertTrue(self.ui.wait_for("working"))
+        live = {"pane": 1, "state": "working", "label": "Still open"}
+        self.send(reg, 1, [live, {"pane": 2, "state": "waiting_input", "label": "Closed meanwhile"}])
+        self.assertTrue(self.receiver.wait_for(lambda rx: len(rx.rows) == 2))
+        scopes = {report["context"]["title"]: report["scope"] for report in self.receiver.reports}
+        live_scope, closed_scope = scopes["Still open"], scopes["Closed meanwhile"]
         kill_coordinator(self.env)
         time.sleep(0.3)
+        before = len(self.receiver.reports)
+        restarted = time.monotonic()
         _, out, _ = run_bridge(["snapshot"], {"epoch": reg["epoch"], "generation": reg["generation"], "seq": 2, "coverage": "complete", "observations": [{"pane": 1, "state": "working"}]}, self.env)
         self.assertEqual(out["error"], "epoch_mismatch")
         _, reg2, _ = run_bridge(["register"], {}, self.env)
         self.assertNotEqual(reg2["epoch"], reg["epoch"])
-        self.send(reg2, 1, [{"pane": 1, "state": "working"}])
-        modes = self.ui.modes()
-        self.assertEqual(modes[-2:], ["idle_ready", "working"], "the restart neutralizes the identity first, then publishes the live state")
+        self.send(reg2, 1, [live])
+        self.assertEqual(self.receiver.shown(), {
+            live_scope: ("working", "Still open"), closed_scope: ("blocked", "Closed meanwhile"),
+        }, "inherited scopes remain visible while live windows re-register")
+        time.sleep(FAST["lease"] / 2)
+        self.assertIn(closed_scope, self.receiver.rows, "closed inherited rows wait for the lease, not just registration")
+        self.send(reg2, 2, [live])  # keep the live pane leased while the inherited closed pane ages out
+        self.assertTrue(self.receiver.wait_for(lambda rx: closed_scope not in rx.rows, timeout=FAST["lease"] / 2 + FAST["reaper"] + 1))
+        self.assertEqual(self.receiver.shown(), {live_scope: ("working", "Still open")})
+        self.assertEqual([(report["scope"], report["status"]["state"]) for report in self.receiver.reports[before:]], [
+            (live_scope, "working"), (closed_scope, "clear"),
+        ], "the live scope is overwritten in place, never cleared and re-added")
+        self.assertGreaterEqual(self.receiver.times[-1] - restarted, FAST["lease"])
 
-    def test_receiver_restart_gets_the_current_mode_only(self):
+    def test_receiver_restart_resubmits_current_rows_without_another_snapshot(self):
         _, reg, _ = run_bridge(["register"], {}, self.env)
-        self.send(reg, 1, [{"pane": 1, "state": "waiting_input"}])
-        self.assertTrue(self.ui.wait_for("waiting_for_input"))
-        self.ui.restart()
-        before = len(self.ui.events)
-        self.send(reg, 2, [{"pane": 1, "state": "waiting_input"}])
-        self.assertTrue(self.ui.wait_for("waiting_for_input", timeout=3, minimum=2))
-        self.assertEqual(self.ui.modes()[before:], ["waiting_for_input"], "only the current mode, no replayed history")
+        self.send(reg, 1, [
+            {"pane": 1, "state": "waiting_input", "label": "Question"},
+            {"pane": 2, "state": "working", "label": "Running"},
+            {"pane": 3, "state": "idle", "label": "Ready"},
+        ])
+        self.assertTrue(self.receiver.wait_for(lambda rx: len(rx.rows) == 3))
+        visible = self.receiver.shown()
+        before = len(self.receiver.reports)
+        restarted = time.monotonic()
+        self.receiver.restart()
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.shown() == visible, timeout=FAST["reaper"] + 1.0))
+        self.assertEqual(self.receiver.states()[before:], ["blocked", "working", "idle"], "only current rows, no historical states")
+        self.assertLessEqual(self.receiver.times[-1] - restarted, FAST["reaper"] + 1.0)
 
-    def test_other_family_down_then_back(self):
-        self.svc.stop()
+    def test_config_labels_false_suppresses_the_real_coordinator_title(self):
+        data = Path(self.env["TERN_PLUGIN_DATA"])
+        data.mkdir(parents=True, exist_ok=True)
+        (data / "config.json").write_text('{"labels": false}\n')
         _, reg, _ = run_bridge(["register"], {}, self.env)
-        ack = self.send(reg, 1, [{"pane": 1, "state": "working"}])
-        self.assertEqual(ack["delivery"]["ui"]["mode"], "working")
-        self.assertIsNone(ack["delivery"]["service"]["mode"])
-        self.svc = FakeReceiver(self.tmp / "relay-events.sock")
-        self.svc.start()
-        self.assertTrue(self.svc.wait_for("working", timeout=4), "the returning service gets the current mode without waiting out the full backoff")
+        self.send(reg, 1, [{"pane": 1, "state": "working", "label": "PRIVATE: Founder opt-out"}])
+        self.assertTrue(self.receiver.wait_for(lambda rx: len(rx.rows) == 1))
+        report = self.receiver.reports[0]
+        self.assertEqual(report["context"]["title"], "")
+        self.assertEqual(report["context"]["display_name"], "OMP in Tern")
+        self.assertEqual(list(self.receiver.shown().values()), [("working", "OMP in Tern")])
+        _, out, _ = run_bridge(["status"], None, self.env)
+        self.assertFalse(out["status"]["transport"]["labels"], "the detached coordinator inherited the config setting")
 
     def test_max_size_labelled_snapshot_is_accepted(self):
         code, reg, err = run_bridge(["register"], {}, self.env)
@@ -103,24 +126,26 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertTrue(ack["ok"], ack)
         self.assertEqual(ack["rows"], {"working": 512})
-        self.assertTrue(self.ui.wait_for("working"))
-        self.assertTrue(self.svc.wait_for("working"))
+        self.assertTrue(self.receiver.wait_for(lambda rx: len(rx.rows) == 32))
+        self.assertEqual(set(self.receiver.shown().values()), {("working", "é" * 96)})
         code, out, err = run_bridge(["status"], None, self.env)
         self.assertEqual(code, 0, err)
         self.assertTrue(out["ok"], out)
         self.assertEqual(out["status"]["rows_total"], 512)
         self.assertEqual(out["status"]["rows_labelled"], 512)
+        self.assertEqual(out["status"]["transport"]["rows"], 32)
+        self.assertEqual(out["status"]["transport"]["rows_capped"], 480)
 
     @unittest.skipUnless(os.environ.get("TERN_SIDEPULSE_SLOW_TESTS"), "set TERN_SIDEPULSE_SLOW_TESTS=1 for the default-limits timing check")
-    def test_default_limits_neutral_within_20s(self):
-        env = subprocess_env(self.tmp, self.ui.path, self.svc.path, None)
+    def test_default_limits_clear_within_20s(self):
+        env = subprocess_env(self.tmp, self.receiver.path)
+        env.pop("TERN_SIDEPULSE_LIMITS", None)
         _, reg, _ = run_bridge(["register"], {}, env)
         _, ack, _ = run_bridge(["snapshot"], {"epoch": reg["epoch"], "generation": reg["generation"], "seq": 1, "coverage": "complete", "observations": [{"pane": 1, "state": "working"}]}, env)
         self.assertTrue(ack["ok"])
         last = time.monotonic()
-        self.assertTrue(self.ui.wait_for("idle_ready", timeout=25, minimum=2))
-        self.assertLessEqual(self.ui.times[-1] - last, 20.0)
-        kill_coordinator(env)
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.states() == ["working", "clear"] and not rx.rows, timeout=25))
+        self.assertLessEqual(self.receiver.times[-1] - last, 20.0)
 
 
 if __name__ == "__main__":

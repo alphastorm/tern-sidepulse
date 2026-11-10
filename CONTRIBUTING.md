@@ -19,9 +19,9 @@ behavior claims are backed by evidence, privacy boundaries stay intact, and the 
   `TERN_SIDEPULSE_REQUIRE_LUAU=1` to fail instead of skipping when `luau` is absent). An Oh My Pi session started at
   the repository root runs the same analysis while editing: [`.omp/lsp.json`](.omp/lsp.json) launches `luau-lsp lsp`
   with these definitions on the standard (non-Roblox) platform, for diagnostics and hover on `.luau` files.
-- **Tern 0.9.12 on macOS**: required only for manual end-to-end checks against a live Tern window and SidePulse's agent
-  monitor (`events.sock` and `relay-events.sock`); see [`docs/compatibility.md`](docs/compatibility.md) for the probe
-  and integration checks.
+- **Tern 0.9.12 or later on macOS**: required only for manual end-to-end checks against a live Tern window and SidePulse's
+  `program-status.sock` receiver; see [`docs/compatibility.md`](docs/compatibility.md) for the probe and integration
+  checks.
 - **Headless Chrome and `ffmpeg` (with `ffprobe` and `libx264`; `/opt/homebrew/bin/gifsicle` optional)**: required only
   when regenerating brand artwork (`assets/*.png`) or demo media (`docs/media/*`) with `scripts/render_assets.py`.
 
@@ -34,8 +34,9 @@ python3 -B -m unittest discover -s tests -t . -v   # -B keeps bytecode out of a 
 luau-lsp analyze --definitions=types/tern.d.luau window.luau
 ```
 
-Set `SIDEPULSE_PYTHON` to a SidePulse interpreter (defaults to `~/.local/share/sidepulse/venv/bin/python` when present)
-to run `tests/test_sidepulse_contract.py` against the installed SidePulse normalizer, and set
+Set `SIDEPULSE_SRC=<sidepulse checkout>/src` to run the optional SidePulse contract test
+(`SIDEPULSE_SRC=<sidepulse checkout>/src python3 -m unittest tests.test_sidepulse_contract`, skipped without it; CI
+runs it against `inteliwear/sidepulse` at `ad4a5217` with `TERN_SIDEPULSE_REQUIRE_CONTRACT=1`), and set
 `TERN_SIDEPULSE_SLOW_TESTS=1` to include the 20 s default-limits timing test in `tests/test_e2e.py`.
 
 ## Working with a linked checkout
@@ -57,22 +58,25 @@ to run `tests/test_sidepulse_contract.py` against the installed SidePulse normal
 ## Invariants and documentation standards
 
 1. **Standard library only**: do not add third-party Python packages, external runtime tools, or network calls.
-2. **Privacy invariants (`tests/test_privacy.py`, `tests/test_rows.py`)**: the window observer (`window.luau`) reads
-   only `pane`, `state`, `kind`, `program`, `host`, and `alive` from `cx.agents:list()`; `id`, `state`, `panes`, `kind`,
-   `address`, and `name` from `cx.hosts:list()`; `surface.role` from `cx.session:surface(pane, {nodes = 1, depth = 1})`;
-   and, at most once per 5 s pass when the window has at least one OMP pane, `pane`, `tab`, and `title` from
-   `cx.session:panes()` and `id` and `name` from `cx.session:tabs()`. Labels come only from user-given tab names
-   (`TabInfo.name`) and OMP panes' own `PaneInfo.title` (never `TabInfo.title`), and the plugin never reads working
-   directories, model names, commands, prompts, assistant text, tool arguments, or transcript paths. Labels and host
-   keys stay in the coordinator's memory only: they are never logged in `coordinator.log`, persisted to disk, returned
-   by `bridge.py status` or `doctor.json`, echoed in coordinator acknowledgements or rejections, or sent to SidePulse by
-   the hook-event transport. `tests/test_privacy.py` pins that sentinels in labels, host keys, and extra client fields
-   never leave the coordinator, `doctor.json` filters window diagnostics to allow-listed integer counters, and the
-   SidePulse socket payload's `line` object carries only its seven fixed status keys plus `"prompt"` on `working`
-   events (where `"prompt"` is always the constant `"OMP in Tern"`, never user prompt text or a pane label).
+2. **Privacy invariants (`tests/test_privacy.py`, `tests/test_rows.py`, `tests/test_transport.py`)**: the window
+   observer (`window.luau`) reads only `pane`, `state`, `kind`, `program`, `host`, and `alive` from `cx.agents:list()`;
+   `id`, `state`, `panes`, `kind`, `address`, and `name` from `cx.hosts:list()`; `surface.role` from
+   `cx.session:surface(pane, {nodes = 1, depth = 1})`; and, at most once per 5 s pass when the window has at least one
+   OMP pane, `pane`, `tab`, and `title` from `cx.session:panes()` and `id` and `name` from `cx.session:tabs()`. Labels
+   come only from user-given tab names (`TabInfo.name`) and OMP panes' own `PaneInfo.title` (never `TabInfo.title`),
+   and the plugin never reads working directories (`cwd`), model names, commands, prompts, assistant text, tool
+   arguments, or transcript paths. By default, sanitized labels are sent only to SidePulse in `program_status` reports
+   (`context.title`), and setting `"labels": false` in `<plugin data dir>/config.json` sends `"title": ""` and
+   `"display_name": "OMP in Tern"` instead. Host keys never appear outside coordinator memory, and pane ids and host
+   keys never leave the Mac: SidePulse scopes (`tern-sidepulse-<24 hex>`), `context.session_id`, and the write-ahead
+   scope ledger (`program-scopes.json`) hold only salted `sha256(install_id NUL host NUL pane)[:24]` hashes (`install_id`
+   from `identity.json`; local `status` and `doctor.json` list pane ids of active outcome notices). Labels and host keys never appear in
+   `coordinator.log`, `doctor.json`, `bridge.py status`, coordinator acknowledgements or rejections, or
+   `program-scopes.json`, a rejected report logs fixed text only (never SidePulse's error string), and `doctor.json`
+   filters window diagnostics to allow-listed integer counters.
 3. **Exact versions in documentation**: compatibility and behavior claims in `README.md` and
    [`docs/compatibility.md`](docs/compatibility.md) name the exact Tern, OMP, SidePulse, and macOS versions they were
-   exercised against, and never describe a local socket write as physical LED output.
+   exercised against, and never describe a local socket write or acknowledged report as physical LED output.
 
 ## Brand, media, and public site
 

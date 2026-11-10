@@ -40,3 +40,22 @@ jobs:
         env:
           LUAU: ${{ github.workspace }}/luau-bin/luau
           TERN_SIDEPULSE_REQUIRE_LUAU: "1"
+
+  sidepulse-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out SidePulse at the verified revision (the inteliwear/sidepulse#72 merge)
+        uses: actions/checkout@v4
+        with:
+          repository: inteliwear/sidepulse
+          ref: ad4a5217fd3a833cfa2a12e1eaf055f22948cd53
+          path: sidepulse
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m unittest tests.test_sidepulse_contract -v
+        env:
+          SIDEPULSE_SRC: ${{ github.workspace }}/sidepulse/src
+          TERN_SIDEPULSE_REQUIRE_CONTRACT: "1"

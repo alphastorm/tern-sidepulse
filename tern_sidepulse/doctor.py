@@ -1,6 +1,6 @@
 """Doctor: runtime/contract compatibility, coordinator health and receiver transport, read-only.
 
-A successful socket write is reported as delivery, never as an LED check.
+An acknowledged report means SidePulse accepted the row, never that an LED changed.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from . import PROTOCOL_SCHEMA, VERSION
 from .client import CoordinatorUnavailable, Settings, request
 from .coordinator import parse_diag
 from .paths import DOCTOR_NAME, MAX_SOCKET_PATH_BYTES, PLUGIN_ID, SOCKET_NAME, TEMP_SOCKET_SUFFIX_MAX, ensure_private_dir, sidepulse_state_dirs
-from .storage import is_disabled, load_identity, session_id_for
+from .storage import is_disabled, load_identity
 
 LEVELS = {"ok": 0, "warn": 1, "error": 2}
 
@@ -48,7 +48,7 @@ def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: 
         if identity is None:
             _check(checks, "identity", "warn", "no identity yet (created when the coordinator first starts)")
         else:
-            _check(checks, "identity", "ok", f"session {session_id_for(identity)[:24]}…")
+            _check(checks, "identity", "ok", f"install {str(identity['install_id'])[:8]}…")
         if is_disabled(data_dir):
             _check(checks, "latch", "warn", "disabled (latch file present)", "run the tern-sidepulse: enable command")
         else:
@@ -88,18 +88,26 @@ def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: 
                 _check(checks, "observer", "ok", f"this window is observer {mine}")
             else:
                 _check(checks, "observer", "warn", f"this window ({mine}) is not a live observer yet", "wait one reconciliation (5 s) or run resync; a changing parent pid means a shim interpreter, set python in config.json")
-        for family in status.get("transport", {}).get("families", []):
-            present = family.get("receiver_present")
-            delivered = family.get("delivered_mode")
-            error = family.get("last_error")
-            if not present:
-                _check(checks, f"receiver_{family['name']}", "warn", "no socket file", "start SidePulse (menu-bar app or `sidepulse service`)")
-            elif error and family.get("pending"):
-                _check(checks, f"receiver_{family['name']}", "error", f"delivery failing: {error}", "restart SidePulse; the coordinator retries with backoff")
-            else:
-                _check(checks, f"receiver_{family['name']}", "ok", f"delivered {delivered} at {family.get('delivered_wall')} via {family.get('delivered_target')}")
+    transport = status.get("transport") if status is not None else None
+    present = next((path for path in settings.program_sockets if path.exists()), None)
+    if present is None:
+        # 0.1.0's receiver sat next to where program-status.sock belongs; SidePulse removed it with #72.
+        legacy = next((p.parent / "relay-events.sock" for p in settings.program_sockets if (p.parent / "relay-events.sock").exists()), None)
+        if legacy is not None:
+            _check(checks, "receiver", "error", f"{legacy} exists but no program-status.sock: this SidePulse predates program status", "update SidePulse (`sidepulse update`); tern-sidepulse needs a SidePulse that includes inteliwear/sidepulse#72")
+        else:
+            _check(checks, "receiver", "warn", "no program-status.sock: " + ", ".join(str(path) for path in settings.program_sockets), "start SidePulse (`sidepulse service start`, or open the menu-bar app)")
+    elif isinstance(transport, dict) and transport.get("last_error") and transport.get("pending"):
+        _check(checks, "receiver", "error", f"delivery failing: {transport['last_error']}", "restart SidePulse; the coordinator retries with backoff")
+    elif isinstance(transport, dict):
+        labels = "" if transport.get("labels") else ", labels off"
+        _check(checks, "receiver", "ok", f"{transport.get('rows')} row(s) via {transport.get('target') or present}, last accepted {transport.get('delivered_wall')}{labels}")
+        if transport.get("rejected"):
+            _check(checks, "receiver_rejections", "warn", f"SidePulse rejected {transport['rejected']} report(s)", "see coordinator.log; a SidePulse or tern-sidepulse update may be needed")
+    else:
+        _check(checks, "receiver", "ok", f"{present} (no coordinator running)")
     for directory in sidepulse_state_dirs():
-        _check(checks, "sidepulse_state", "ok" if directory.is_dir() else "warn", str(directory), None if directory.is_dir() else "install SidePulse's agent monitor")
+        _check(checks, "sidepulse_state", "ok" if directory.is_dir() else "warn", str(directory), None if directory.is_dir() else "install SidePulse")
         break
 
     if inert is not None and inert.isprintable() and len(inert) <= 120:
@@ -110,7 +118,7 @@ def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: 
 
     worst = max((LEVELS[item["level"]] for item in checks), default=0)
     level = next(name for name, value in LEVELS.items() if value == worst)
-    summary = f"{level}: {sum(1 for c in checks if c['level'] != 'ok')} issue(s); socket delivery is not an LED check"
+    summary = f"{level}: {sum(1 for c in checks if c['level'] != 'ok')} issue(s); an accepted report is not an LED check"
     report = {
         "ok": True,
         "level": level,

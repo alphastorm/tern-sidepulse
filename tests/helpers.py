@@ -1,4 +1,4 @@
-"""Shared fixtures: fake SidePulse receivers, in-memory coordinators, and subprocess helpers."""
+"""Shared fixtures: fake SidePulse program-status receivers, in-memory coordinators, and subprocess helpers."""
 from __future__ import annotations
 
 import atexit
@@ -21,9 +21,12 @@ from tern_sidepulse.clock import Clock  # noqa: E402
 from tern_sidepulse.coordinator import Coordinator  # noqa: E402
 from tern_sidepulse.limits import Limits  # noqa: E402
 from tern_sidepulse.paths import python_flags  # noqa: E402
-from tern_sidepulse.transport import SidePulseTransport  # noqa: E402
+from tern_sidepulse.reducer import IDLE_READY, MODE_PRIORITY, Row  # noqa: E402
+from tern_sidepulse.transport import SidePulseTransport, scope_for  # noqa: E402
 
 SENTINEL = "SENTINEL-7f3a-never-leaks"
+SOCKET = "program-status.sock"
+SALT = "test-install"
 
 
 class FakeClock(Clock):
@@ -49,14 +52,29 @@ def short_tmpdir(prefix: str = "tsp-") -> Path:
     return path
 
 
-class FakeReceiver(threading.Thread):
-    """An AF_UNIX listener that reads each connection to EOF and records decoded payloads."""
+def apply_report(rows: dict[str, dict], report: dict) -> None:
+    """What SidePulse keeps per scope: the last report, removed by a clear."""
+    if report["status"]["state"] == "clear":
+        rows.pop(report["scope"], None)
+    else:
+        rows[report["scope"]] = report
 
-    def __init__(self, path: Path, hang: bool = False) -> None:
+
+def shown(rows: dict[str, dict]) -> dict[str, tuple[str, str]]:
+    """Visible rows as ``{scope: (state, name)}``; the name is the label, else the fallback display name."""
+    return {scope: (r["status"]["state"], r["context"].get("title") or r["context"].get("display_name")) for scope, r in rows.items()}
+
+
+class FakeProgramServer(threading.Thread):
+    """An AF_UNIX program-status receiver: reads each report to EOF and acknowledges it the way SidePulse does."""
+
+    def __init__(self, path: Path, hang: bool = False, reply: dict | None = None) -> None:
         super().__init__(daemon=True)
         self.path = path
-        self.events: list[dict] = []
+        self.reports: list[dict] = []
         self.times: list[float] = []
+        self.rows: dict[str, dict] = {}
+        self.reply = reply  # a fixed answer instead of an acknowledgement, e.g. a rejection
         self._stop = threading.Event()
         self.hang = hang
         self.server: socket.socket | None = None
@@ -81,9 +99,7 @@ class FakeReceiver(threading.Thread):
                 continue
             try:
                 conn, _ = server.accept()
-            except socket.timeout:
-                continue
-            except OSError:
+            except OSError:  # includes socket.timeout
                 continue
             with conn:
                 conn.settimeout(2.0)
@@ -96,15 +112,29 @@ class FakeReceiver(threading.Thread):
                     if not chunk:
                         break
                     chunks.append(chunk)
-            try:
-                self.events.append(json.loads(b"".join(chunks).decode("utf-8")))
+                try:
+                    report = json.loads(b"".join(chunks).decode("utf-8"))
+                except ValueError:
+                    report = {"bad": True}
+                self.reports.append(report)
                 self.times.append(time.monotonic())
-            except ValueError:
-                self.events.append({"bad": True})
-                self.times.append(time.monotonic())
+                if self.reply is not None:
+                    answer = self.reply
+                else:
+                    if "scope" in report:
+                        apply_report(self.rows, report)
+                    answer = {"ok": True, "seq": len(self.reports), "revision": len(self.reports)}
+                try:
+                    conn.sendall(json.dumps(answer).encode("utf-8"))
+                except OSError:
+                    pass
 
-    def modes(self) -> list[str]:
-        return [event["line"]["sidepulse_status"] for event in self.events if "line" in event]
+    def states(self) -> list[str]:
+        """Every reported state, in order."""
+        return [report["status"]["state"] for report in self.reports if "status" in report]
+
+    def shown(self) -> dict[str, tuple[str, str]]:
+        return shown(self.rows)
 
     def stop(self) -> None:
         self._stop.set()
@@ -118,79 +148,102 @@ class FakeReceiver(threading.Thread):
             pass
 
     def restart(self) -> None:
-        """Rebind at the same path: a new inode, as a restarted SidePulse would produce."""
+        """Rebind at the same path with no rows: a new inode, as a restarted SidePulse produces."""
         server = self.server
         self.server = None
         if server is not None:
             server.close()
+        self.rows = {}
         time.sleep(0.02)
         self._bind()
 
-    def wait_for(self, mode: str, timeout: float = 5.0, minimum: int = 1) -> bool:
+    def wait_for(self, predicate, timeout: float = 5.0) -> bool:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            modes = self.modes()
-            if modes.count(mode) >= minimum and modes[-1] == mode:
+            if predicate(self):
                 return True
             time.sleep(0.02)
         return False
 
 
 class RecordingSender:
-    """In-process transport sink. A target delivers only while its file exists (``up``/``down``)."""
+    """In-process SidePulse for the transport's ``sender`` hook. A target answers only while its file exists
+    (``up``/``down``); ``restart`` gives it a new inode and forgets its rows, as a restarted daemon would."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
-        self.sent: list[tuple[str, str]] = []
+        self.reports: list[dict] = []  # every accepted report, in order
+        self.rows: dict[str, dict] = {}
         self.clock: FakeClock | None = None
         self.cost = 0.0  # fake seconds each attempt costs (hung receiver)
         self.refuse: set[str] = set()  # present but refusing (a receiver restarting)
+        self.answer: dict | None = None  # a fixed answer instead of an acknowledgement (busy, rejection)
 
-    def path(self, name: str) -> Path:
+    def path(self, name: str = SOCKET) -> Path:
         return self.root / name
 
-    def up(self, name: str) -> None:
+    def up(self, name: str = SOCKET) -> None:
         self.refuse.discard(name)
         if not self.path(name).exists():
             self.path(name).write_text("")
 
-    def down(self, name: str) -> None:
+    def down(self, name: str = SOCKET) -> None:
         try:
             self.path(name).unlink()
         except FileNotFoundError:
             pass
 
-    def __call__(self, target: Path, payload: bytes, timeout: float) -> None:
+    def restart(self, name: str = SOCKET) -> None:
+        self.down(name)
+        self.rows = {}
+        self.up(name)
+
+    def __call__(self, target: Path, payload: bytes, timeout: float) -> dict:
         if self.clock is not None and self.cost:
             self.clock.advance(min(self.cost, timeout))
         if not target.exists():
             raise FileNotFoundError(2, "No such file or directory")
         if target.name in self.refuse:
             raise ConnectionRefusedError(61, "Connection refused")
-        line = json.loads(payload.decode("utf-8"))["line"]
-        self.sent.append((target.name, line["sidepulse_status"]))
+        if self.answer is not None:
+            return dict(self.answer)
+        report = json.loads(payload.decode("utf-8"))
+        self.reports.append(report)
+        apply_report(self.rows, report)
+        return {"ok": True, "seq": len(self.reports), "revision": len(self.reports)}
 
-    def modes_for(self, name: str) -> list[str]:
-        return [mode for target, mode in self.sent if target == name]
+    def states(self) -> list[str]:
+        """Every accepted state, in order."""
+        return [report["status"]["state"] for report in self.reports]
+
+    def shown(self) -> dict[str, tuple[str, str]]:
+        return shown(self.rows)
 
 
-def make_coordinator(limits: Limits | None = None, disabled: bool = False, clock: FakeClock | None = None, receivers_up: bool = True):
+def scope(pane: int | str, host: str = "local") -> str:
+    """The scope the test transport uses for a row (it depends on host and pane only)."""
+    return scope_for(SALT, Row(host, str(pane), IDLE_READY, None))
+
+
+def make_transport(sender: RecordingSender, clock: FakeClock, **kw) -> SidePulseTransport:
+    kw.setdefault("ledger_path", sender.root / "program-scopes.json")
+    return SidePulseTransport(clock=clock, candidates=(sender.path(),), salt=SALT, sender=sender, **kw)
+
+
+def make_coordinator(limits: Limits | None = None, disabled: bool = False, clock: FakeClock | None = None, receivers_up: bool = True, labels: bool = True):
     clock = clock or FakeClock()
-    root = short_tmpdir("tsp-rx-")
-    sender = RecordingSender(root)
+    limits = limits or Limits()
+    sender = RecordingSender(short_tmpdir("tsp-rx-"))
     sender.clock = clock
     if receivers_up:
-        sender.up("events.sock")
-        sender.up("relay-events.sock")
+        sender.up()
     logs: list[str] = []
-    transport = SidePulseTransport.for_receivers(
-        "tern-sidepulse:test", clock, (root / "events.sock",), (root / "relay-events.sock",), sender=sender, log=logs.append
-    )
+    transport = make_transport(sender, clock, labels=labels, inherit_grace=limits.lease, log=logs.append)
     latch: list[bool] = []
     coordinator = Coordinator(
         clock=clock,
         transport=transport,
-        limits=limits or Limits(),
+        limits=limits,
         disabled=disabled,
         persist_disabled=latch.append,
         log=logs.append,
@@ -211,7 +264,8 @@ def advance(coordinator: Coordinator, clock: FakeClock, seconds: float, step: fl
 
 
 def combined_mode(coordinator: Coordinator) -> str:
-    return coordinator.transport.desired
+    """The most urgent row's mode, ``idle_ready`` without rows: what one aggregate LED would show."""
+    return min((row.mode for row in coordinator.rows), key=MODE_PRIORITY.__getitem__, default=IDLE_READY)
 
 
 def rows(coordinator: Coordinator) -> list[tuple[str, str, str, str | None]]:
@@ -301,15 +355,14 @@ def run_bridge(args: list[str], stdin: dict | None, env: dict, timeout: float = 
     return proc.returncode, parsed, proc.stderr.decode("utf-8")
 
 
-def subprocess_env(tmp: Path, ui: Path, service: Path, limits: dict | None = None) -> dict:
+def subprocess_env(tmp: Path, program: Path, limits: dict | None = None) -> dict:
     env = dict(os.environ)
     env.pop("TERN_WINDOW_KEY", None)
     env.update(
         {
             "TERN_PLUGIN_DATA": str(tmp / "data"),
             "TERN_SIDEPULSE_RUNTIME_DIR": str(tmp / "rt"),
-            "TERN_SIDEPULSE_UI_SOCKETS": str(ui),
-            "TERN_SIDEPULSE_SERVICE_SOCKETS": str(service),
+            "TERN_SIDEPULSE_PROGRAM_SOCKETS": str(program),
         }
     )
     if limits:

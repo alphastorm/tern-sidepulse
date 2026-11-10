@@ -9,7 +9,7 @@
 -- labels refresh within one 5 s pass. It never submits prompts, approves anything, reads transcripts
 -- or changes layouts; it keeps only plain data between callbacks, never a `cx`, a row or timer handle.
 
-local VERSION = "0.1.0"
+local VERSION = "0.2.0"
 local DATA = tern.plugin.data
 local BRIDGE = tern.plugin.dir .. "/bridge.py"
 local COALESCE_MS = 75
