@@ -91,7 +91,7 @@ From the Tern command palette:
 | --- | --- |
 | `tern-sidepulse: doctor` | Checks Python, the data and runtime directories, the coordinator, this window, and the SidePulse `program-status.sock` receiver (`receiver` check); shows a one-line toast and writes `~/.local/state/tern-sidepulse/doctor.json` |
 | `tern-sidepulse: resync` | Re-registers this window and resends every current row to SidePulse |
-| `tern-sidepulse: disable` | Persists the `disabled` latch file, drops every registered window, and clears every row this plugin has shown on SidePulse |
+| `tern-sidepulse: disable` | Persists the `disabled` latch file, drops every registered window, clears every row this plugin has shown on SidePulse, and stops the coordinator |
 | `tern-sidepulse: enable` | Removes the `disabled` latch file; this window registers right away and other open windows on their next 5 s cycle |
 
 The same operations, plus `status`, from a shell in the plugin directory with Python 3.10 or later:
@@ -121,7 +121,7 @@ To override Python discovery, SidePulse socket paths, or label delivery, create 
 - `program_sockets` overrides SidePulse's default `program-status.sock` candidates in `$XDG_STATE_HOME/sidepulse/agent-monitor` and `~/.local/state/sidepulse/agent-monitor` (including SidePulse's `/tmp/sidepulse-status-<uid>/<sha256(path)[:16]>.sock` fallback when the socket path exceeds 96 bytes). For CLI and test launches, `TERN_SIDEPULSE_PROGRAM_SOCKETS` (`:`-separated) and `bridge.py coordinator --program-socket PATH` (repeatable) take precedence over `program_sockets`.
 - `labels` defaults to `true`. Setting `"labels": false` stops sending tab and pane titles to SidePulse; every row then sends `"title": ""` and `"display_name": "OMP in Tern"`.
 
-`program_sockets` and `labels` are read when the coordinator starts. A running coordinator keeps its startup setting until it exits: run `tern-sidepulse: disable` and then `tern-sidepulse: enable` to restart it on the next window snapshot.
+`program_sockets` and `labels` are read when the coordinator starts. A running coordinator keeps its startup setting until it exits: run `tern-sidepulse: disable` (which clears the rows and stops the coordinator) and then `tern-sidepulse: enable`; the next window snapshot starts a coordinator that reads the new setting.
 
 ## How it works
 
@@ -158,7 +158,7 @@ By default, sanitized labels are sent to SidePulse in each row's `program_status
 
 1. Run **tern-sidepulse: disable** from the Tern palette (or `python3 bridge.py disable --data-dir "$HOME/Library/Application Support/Tern/plugin-data/tern-sidepulse"`). This persists the `disabled` latch, drops every registered window, and clears the plugin's status on SidePulse so a late helper cannot restore an old state.
 2. Unlink or remove the plugin: `tern plugin unlink tern-sidepulse` for a development link, or `tern plugin remove tern-sidepulse` for an installed copy.
-3. Wait for the coordinator to drain and exit on its own: about 5 s after the clear event is delivered, or at most 60 s if SidePulse is unreachable (`pgrep -f "bridge.py coordinator"` checks whether it is still running).
+3. The coordinator stops on its own once its rows are cleared: within about 2 s, or at once if SidePulse is not running (`pgrep -f "bridge.py coordinator"` checks whether it is still running). Rows it could not clear stay listed in `program-scopes.json` for the next coordinator.
 4. Tern keeps the plugin data directory (`$HOME/Library/Application Support/Tern/plugin-data/tern-sidepulse`, containing `identity.json`, `disabled`, and `pycache/`), so a later reinstall starts disabled until you run **tern-sidepulse: enable**. For a clean slate, delete `~/.local/state/tern-sidepulse` (or the fallback runtime path reported by `doctor`) and the plugin data directory after step 3 completes.
 
 ## Known limitations

@@ -42,9 +42,10 @@ class CliTest(unittest.TestCase):
         self.assertEqual(out["error"], "usage")
         env = dict(self.env)
         env.pop("TERN_PLUGIN_DATA")
-        code, out, _ = run_bridge(["register"], {}, env)
-        self.assertEqual(code, 2)
-        self.assertIn("data-dir", out["detail"])
+        for command in ("register", "resync"):
+            code, out, _ = run_bridge([command], {}, env)
+            self.assertEqual(code, 2, command)
+            self.assertIn("data-dir", out["detail"], "a coordinator spawned without a data dir could never start")
         env = dict(self.env, TERN_SIDEPULSE_LIMITS='{"lease": -1}')
         code, out, _ = run_bridge(["status"], None, env)
         self.assertEqual(code, 2)

@@ -418,7 +418,10 @@ class Coordinator:
             persisted = False
             self.log(f"could not persist the disabled latch: {type(exc).__name__}")
         self.recompute(self.clock.monotonic())
-        self.log("disabled: observers revoked, neutral requested")
+        # Exit once this answer is out: shutdown clears every row (a crashed predecessor's included), and the
+        # coordinator that `enable` lets the next snapshot start reads config.json afresh.
+        self.request_stop("disabled")
+        self.log("disabled: observers revoked, rows cleared, coordinator stopping")
         return {
             "disabled": True,
             "persisted": persisted,
@@ -592,17 +595,17 @@ class Coordinator:
         self.stop_reason = reason
 
     def shutdown(self) -> None:
-        """Clear every row this install may show, once, on the way out; bounded by the transport's tick budget.
+        """Clear every row this install may show on the way out, tick after tick, within the transport's exit budget.
 
-        This is the last attempt this process will ever make, so retry spacing after a recent
-        failure must not skip it. Scopes it cannot clear stay in the ledger for the next coordinator.
+        This is the last attempt this process will ever make, so retry spacing after a recent failure must
+        not skip it; a send that fails ends it. Scopes it cannot clear stay in the ledger for the next coordinator.
         """
         for observer in list(self.observers.values()):
             self._note_retired(observer.generation, "shutdown")
         self.observers.clear()
         self.rows = ()
         self.transport.withdraw()
-        self.transport.tick(immediate=True)
+        self.transport.drain()
 
     # ---- reporting ------------------------------------------------------------------------
 

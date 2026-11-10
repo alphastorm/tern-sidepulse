@@ -180,7 +180,7 @@ local function cut_utf8(text: string, max_bytes: number): string
 	end
 	local cut = max_bytes + 1
 	local byte = text:byte(cut)
-	while byte ~= nil and byte >= 0x80 and byte <= 0xBF do
+	while cut > 1 and byte ~= nil and byte >= 0x80 and byte <= 0xBF do
 		cut -= 1
 		byte = text:byte(cut)
 	end

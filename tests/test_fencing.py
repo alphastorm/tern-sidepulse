@@ -1,10 +1,12 @@
 import unittest
 
-from tests.helpers import OBS, activate, combined_mode, idle, make_coordinator, register, scope, snapshot, working
+from tests.helpers import OBS, FakeClock, RecordingSender, activate, combined_mode, idle, make_coordinator, make_transport, register, scope, short_tmpdir, snapshot, working
 
 from tern_sidepulse import VERSION
-from tern_sidepulse.coordinator import ProtocolError, decode_request
+from tern_sidepulse.coordinator import Coordinator, ProtocolError, decode_request
 from tern_sidepulse.limits import Limits
+from tern_sidepulse.reducer import Row
+from tern_sidepulse.transport import ScopeLedger
 
 
 class FencingTest(unittest.TestCase):
@@ -84,6 +86,22 @@ class FencingTest(unittest.TestCase):
         self.assertEqual(combined_mode(c), "working")
         self.assertEqual(sender.states(), ["working", "clear", "working"])
         self.assertEqual(sender.shown(), {scope(1): ("working", "OMP in Tern")})
+
+    def test_disable_stops_the_coordinator_and_its_exit_clears_every_row(self):
+        clock = FakeClock()
+        sender = RecordingSender(short_tmpdir("tsp-disable-"))
+        sender.up()
+        crashed = make_transport(sender, clock)
+        crashed.publish([Row("local", "9", "working", "Left behind")])
+        crashed.tick()  # a predecessor showed this row, then died without clearing it
+        c = Coordinator(clock=clock, transport=make_transport(sender, clock, inherit_grace=15.0), limits=Limits(), disabled=False, persist_disabled=lambda _flag: None, log=lambda _line: None)
+        activate(c, [working(1)])
+        self.assertEqual(set(sender.shown()), {scope(1), scope(9)})
+        c.handle({"schema": 1, "op": "disable"})
+        self.assertEqual(c.tick(), "exit", "disable stops the coordinator, so `enable` lets a fresh one read config.json")
+        c.shutdown()
+        self.assertEqual(sender.shown(), {}, "the exit clears the predecessor's row too, without waiting out its grace")
+        self.assertEqual(ScopeLedger(sender.root / "program-scopes.json").scopes, set())
 
     def test_token_eviction_and_bounded_bookkeeping(self):
         c, _, _, _, _ = make_coordinator(Limits(max_tokens=8))

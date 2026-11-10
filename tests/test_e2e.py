@@ -111,6 +111,23 @@ class EndToEndTest(unittest.TestCase):
         _, out, _ = run_bridge(["status"], None, self.env)
         self.assertFalse(out["status"]["transport"]["labels"], "the detached coordinator inherited the config setting")
 
+    def test_disable_then_enable_applies_a_changed_labels_setting(self):
+        _, reg, _ = run_bridge(["register"], {}, self.env)
+        labelled = {"pane": 1, "state": "working", "label": "Private tab"}
+        self.send(reg, 1, [labelled])
+        self.assertTrue(self.receiver.wait_for(lambda rx: list(rx.shown().values()) == [("working", "Private tab")]))
+        (Path(self.env["TERN_PLUGIN_DATA"]) / "config.json").write_text('{"labels": false}\n')
+        code, out, err = run_bridge(["disable"], None, self.env)
+        self.assertTrue(out.get("disabled"), (out, err))
+        code, out, err = run_bridge(["enable"], None, self.env)  # right away, as the README says
+        self.assertEqual(out.get("disabled"), False, (out, err))
+        _, reg2, err = run_bridge(["register"], {}, self.env)
+        self.assertTrue(reg2.get("ok"), (reg2, err))
+        self.assertNotEqual(reg2["coordinator_pid"], reg["coordinator_pid"], "disable stopped the old coordinator")
+        self.send(reg2, 1, [labelled])
+        self.assertTrue(self.receiver.wait_for(lambda rx: list(rx.shown().values()) == [("working", "OMP in Tern")]))
+        self.assertNotIn("Private tab", self.receiver.reports[-1]["context"]["title"])
+
     def test_max_size_labelled_snapshot_is_accepted(self):
         code, reg, err = run_bridge(["register"], {}, self.env)
         self.assertEqual(code, 0, err)

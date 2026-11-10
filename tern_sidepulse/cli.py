@@ -160,6 +160,7 @@ def main(argv: list[str], bridge_path: Path) -> int:
             _emit(request(settings, {"schema": PROTOCOL_SCHEMA, "op": "status"}, spawn=False, total_timeout=1.0))
             return 0
         if command == "resync":
+            require_data_dir(settings)  # a coordinator spawned without one could never start
             _emit(request(settings, {"schema": PROTOCOL_SCHEMA, "op": "resync"}, spawn=True))
             return 0
         if command == "disable":

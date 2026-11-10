@@ -2,7 +2,7 @@ import json
 import time
 import unittest
 
-from tests.helpers import SENTINEL, FakeClock, FakeProgramServer, RecordingSender, make_transport, scope, short_tmpdir
+from tests.helpers import SALT, SENTINEL, SOCKET, FakeClock, FakeProgramServer, RecordingSender, make_transport, scope, short_tmpdir
 
 from tern_sidepulse.reducer import Row
 from tern_sidepulse.transport import ACTIVE_REFRESH_SECONDS, MAX_ROWS, SEND_TIMEOUT_SECONDS, TICK_BUDGET_SECONDS, SidePulseTransport, ScopeLedger, exchange
@@ -215,6 +215,20 @@ class DeliveryTest(unittest.TestCase):
         t.tick()
         self.assertEqual(sender.shown()[scope(2)], ("idle", "D"))
 
+    def test_sidepulse_moving_to_another_candidate_gets_every_row(self):
+        clock = FakeClock()
+        sender = RecordingSender(short_tmpdir("tsp-tx-"))
+        sender.up("a.sock")
+        t = SidePulseTransport(clock=clock, candidates=(sender.path("a.sock"), sender.path("b.sock")), ledger_path=sender.root / "program-scopes.json", salt=SALT, sender=sender)
+        t.publish([Row("local", "1", "idle_ready", "Idle")])
+        t.tick()
+        sender.down("a.sock")
+        sender.rows = {}  # SidePulse stopped and came back under its other state directory, empty
+        sender.up("b.sock")
+        clock.advance(1)
+        t.tick()
+        self.assertEqual(sender.shown(), {scope(1): ("idle", "Idle")}, "an unchanged idle row is resubmitted, not left out")
+
     def test_only_active_rows_are_refreshed(self):
         t, sender, clock, _ = fresh()
         t.publish([Row("local", "1", "working", None), Row("local", "2", "idle_ready", None)])
@@ -241,6 +255,34 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(t.undelivered_neutral(), ["program_status"])
         sender.down()
         self.assertEqual(t.undelivered_neutral(), [], "nothing can be visible when SidePulse is not listening")
+
+    def test_exit_drain_clears_every_row_past_one_tick_budget(self):
+        t, sender, _, _ = fresh()
+        t.publish([Row("local", str(i), "working", None) for i in range(10)])
+        t.tick()
+        sender.cost = 0.1  # each acknowledgement takes 0.1 s, so one 0.3 s tick clears about three rows
+        t.withdraw()
+        t.drain()
+        self.assertEqual(sender.shown(), {})
+        self.assertEqual(ScopeLedger(t.ledger.path).scopes, set())
+
+    def test_exit_drain_stops_at_the_first_failure(self):
+        t, sender, _, _ = fresh()
+        t.publish([Row("local", str(i), "working", None) for i in range(3)])
+        t.tick()
+        sender.refuse.add(SOCKET)
+        attempts = []
+        original = t.sender
+
+        def counting(target, payload, timeout):
+            attempts.append(target)
+            return original(target, payload, timeout)
+
+        t.sender = counting
+        t.withdraw()
+        t.drain()
+        self.assertEqual(len(attempts), 1, "a refusing receiver is not hammered for the whole budget")
+        self.assertEqual(len(ScopeLedger(t.ledger.path).scopes), 3, "uncleared scopes stay for the next coordinator")
 
 
 class InheritedScopesTest(unittest.TestCase):
@@ -277,6 +319,25 @@ class InheritedScopesTest(unittest.TestCase):
         t.tick(immediate=True)
         self.assertEqual(sender.shown(), {})
         self.assertEqual(t.ledger.scopes, set())
+
+    def test_predecessor_leftovers_never_push_past_the_row_cap(self):
+        old, sender, clock, _ = fresh()
+        old.publish([Row("local", f"old{i}", "working", None) for i in range(MAX_ROWS)])
+        old.tick()
+        new = make_transport(sender, clock, inherit_grace=15.0)
+        most = []
+
+        def watching(target, payload, timeout):
+            reply = sender(target, payload, timeout)
+            most.append(len(sender.rows))
+            return reply
+
+        new.sender = watching
+        new.publish([Row("local", f"new{i}", "working", None) for i in range(MAX_ROWS)])
+        new.tick()
+        self.assertEqual(set(sender.shown()), {scope(f"new{i}") for i in range(MAX_ROWS)})
+        self.assertLessEqual(max(most), MAX_ROWS, "clears go out before new rows, so the install never shows more than its cap")
+        self.assertEqual(new.inherited, set())
 
     def test_corrupt_or_foreign_ledger_entries_are_ignored(self):
         _, sender, clock = self.predecessor()

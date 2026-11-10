@@ -38,6 +38,7 @@ SCOPE_PREFIX = "tern-sidepulse-"
 UNLABELLED = "OMP in Tern"
 MAX_ROWS = 32  # SidePulse keeps 64 rows across every provider and silently evicts the least recently updated
 TICK_BUDGET_SECONDS = 0.3
+DRAIN_BUDGET_SECONDS = 2.0  # how long an exiting coordinator keeps clearing rows
 SEND_TIMEOUT_SECONDS = 0.2
 MAX_RETRY_SECONDS = 30.0
 ACTIVE_REFRESH_SECONDS = 300.0  # restores an active row SidePulse evicted or lost without replacing its socket
@@ -205,11 +206,22 @@ class SidePulseTransport:
         for scope, entry in self.entries.items():
             if scope not in wanted and not entry.clearing:
                 self._mark_clear(entry)
+        if self.inherited and len(wanted) + len(self.inherited) > self.max_rows:
+            self._clear_inherited()  # a predecessor's leftovers may not push this install past its row cap
 
     def withdraw(self) -> None:
         """Clear every scope this install may show, a predecessor's included: the coordinator is leaving."""
         self.publish(())
         self._clear_inherited()
+
+    def drain(self, budget: float = DRAIN_BUDGET_SECONDS) -> None:
+        """Exit path: tick, ignoring backoff, until nothing is pending, a send fails, or ``budget`` seconds pass."""
+        deadline = self.clock.monotonic() + budget
+        while self.clock.monotonic() < deadline and any(entry.pending and not entry.rejected for entry in self.entries.values()):
+            failures = self.failures
+            self.tick(immediate=True)
+            if self.failures > failures:
+                return
 
     def tick(self, immediate: bool = False) -> bool:
         """Send what is due within one bounded budget (ignoring backoff when ``immediate``); True if it tried."""
@@ -339,9 +351,15 @@ class SidePulseTransport:
         if self.target is None:
             return
         current_target = signature(self.target)
-        if current_target is None or current_target == self.target_signature:
+        if current_target == self.target_signature:
             return
-        self.target_signature = current_target
+        if current_target is None:
+            # The target is gone. A SidePulse now listening on another candidate started empty as well.
+            if not any(signature(path) is not None for path in self.candidates if path != self.target):
+                return
+            self.target = None  # the next send picks whichever candidate answers
+        else:
+            self.target_signature = current_target
         for entry in self.entries.values():
             if not entry.clearing and entry.body["status"]["state"] != "done":
                 if not entry.pending:

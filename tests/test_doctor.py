@@ -1,12 +1,15 @@
+import os
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 from tests.helpers import short_tmpdir
 
 from tern_sidepulse.client import CoordinatorUnavailable, Settings
-from tern_sidepulse.doctor import run_doctor
+from tern_sidepulse.doctor import _legacy_receivers, run_doctor
 from tern_sidepulse.limits import Limits
+from tern_sidepulse.paths import sidepulse_program_sockets, sidepulse_state_dirs
 
 
 def settings_for(tmp: Path) -> Settings:
@@ -28,6 +31,10 @@ class ReceiverCheckTest(unittest.TestCase):
         self.tmp = short_tmpdir("tsp-doctor-")
         (self.tmp / "state").mkdir()
         self.settings = settings_for(self.tmp)
+        # Doctor also looks in SidePulse's default state directories: keep them inside this test.
+        environment = patch.dict(os.environ, {"HOME": str(self.tmp / "home"), "XDG_STATE_HOME": str(self.tmp / "xdg")})
+        environment.start()
+        self.addCleanup(environment.stop)
 
     def doctor(self, transport: dict | None = None) -> dict:
         if transport is None:
@@ -59,6 +66,22 @@ class ReceiverCheckTest(unittest.TestCase):
         self.assertIn("2 row(s)", checks[0]["detail"])
         self.assertIn("labels off", checks[0]["detail"])
         self.assertEqual(checks[1]["level"], "warn")
+
+    def test_pre_72_sidepulse_is_found_when_its_paths_fall_back_to_tmp(self):
+        long_root = self.tmp / ("x" * 60)  # makes both state-directory socket paths longer than 96 bytes
+        with patch.dict(os.environ, {"XDG_STATE_HOME": str(long_root)}):
+            settings = replace(self.settings, program_sockets=sidepulse_program_sockets())
+            state = sidepulse_state_dirs()[0]
+        self.assertTrue(str(settings.program_sockets[0]).startswith("/tmp/sidepulse-status-"))
+        _, tmp_relay = _legacy_receivers(state)
+        tmp_relay.write_text("")
+        self.addCleanup(tmp_relay.unlink)
+        self.settings = settings
+        with patch.dict(os.environ, {"XDG_STATE_HOME": str(long_root)}):
+            [check] = receiver(self.doctor())
+        self.assertEqual(check["level"], "error")
+        self.assertIn(str(tmp_relay), check["detail"])
+        self.assertIn("sidepulse update", check["remedy"])
 
 
 if __name__ == "__main__":

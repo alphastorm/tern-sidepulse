@@ -4,10 +4,12 @@ An acknowledged report means SidePulse accepted the row, never that an LED chang
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
 import sys
+from pathlib import Path
 
 from . import PROTOCOL_SCHEMA, VERSION
 from .client import CoordinatorUnavailable, Settings, request
@@ -23,6 +25,16 @@ def _check(checks: list, id_: str, level: str, detail: str, remedy: str | None =
     if remedy:
         item["remedy"] = remedy
     checks.append(item)
+
+
+def _legacy_receivers(state_dir: Path) -> tuple[Path, ...]:
+    """Where a SidePulse older than #72 bound its relay socket: in its state directory, or in /tmp when that
+    path is over 96 bytes (upstream ``relay_socket_path_for_state_dir`` before #72)."""
+    path = state_dir / "relay-events.sock"
+    if len(str(path).encode("utf-8")) <= 96:
+        return (path,)
+    digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
+    return (path, Path("/tmp") / f"sidepulse-relay-{os.getuid()}-{digest}.sock")
 
 
 def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: str | None = None, inert: str | None = None) -> dict:
@@ -91,8 +103,9 @@ def run_doctor(settings: Settings, window_diag: dict | None = None, window_key: 
     transport = status.get("transport") if status is not None else None
     present = next((path for path in settings.program_sockets if path.exists()), None)
     if present is None:
-        # 0.1.0's receiver sat next to where program-status.sock belongs; SidePulse removed it with #72.
-        legacy = next((p.parent / "relay-events.sock" for p in settings.program_sockets if (p.parent / "relay-events.sock").exists()), None)
+        # SidePulse removed the 0.1.0 receiver with #72; finding one means this SidePulse needs an update.
+        directories = dict.fromkeys([path.parent for path in settings.program_sockets] + list(sidepulse_state_dirs()))
+        legacy = next((p for d in directories for p in _legacy_receivers(d) if p.exists()), None)
         if legacy is not None:
             _check(checks, "receiver", "error", f"{legacy} exists but no program-status.sock: this SidePulse predates program status", "update SidePulse (`sidepulse update`); tern-sidepulse needs a SidePulse that includes inteliwear/sidepulse#72")
         else:
