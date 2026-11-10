@@ -1,6 +1,6 @@
 import unittest
 
-from tests.helpers import activate, advance, combined_mode, idle, make_coordinator, register, snapshot, working
+from tests.helpers import SOCKET, activate, advance, combined_mode, idle, make_coordinator, register, scope, snapshot, working
 
 from tern_sidepulse.limits import Limits
 
@@ -24,17 +24,18 @@ class LeaseTest(unittest.TestCase):
         snapshot(c, gen, epoch, 2, [])
         self.assertEqual(combined_mode(c), "idle_ready")
 
-    def test_vanished_window_expires_and_neutral_is_sent(self):
+    def test_vanished_window_expires_and_its_row_is_cleared(self):
         c, clock, sender, _, _ = make_coordinator(Limits(lease=15, reaper=1))
         activate(c, [working(1)])
         advance(c, clock, 14)
         self.assertEqual(combined_mode(c), "working")
         advance(c, clock, 1)
         self.assertEqual(combined_mode(c), "idle_ready")
-        self.assertEqual(sender.modes_for("events.sock")[-1], "idle_ready")
+        self.assertEqual(sender.states(), ["working", "clear"])
+        self.assertEqual(sender.shown(), {})
         self.assertEqual(c.counters["expired_observers"], 1)
 
-    def test_exit_after_grace_once_neutral_delivered(self):
+    def test_exit_after_grace_once_clear_delivered(self):
         c, clock, _, _, _ = make_coordinator(Limits(lease=2, reaper=1, exit_grace=5, final_grace=60))
         activate(c, [working(1)])
         self.assertIsNone(advance(c, clock, 2), "the lease ends at t=2 and the drain starts")
@@ -49,46 +50,36 @@ class LeaseTest(unittest.TestCase):
         register(c)
         self.assertIsNone(advance(c, clock, 1), "a window that just registered must get its activating snapshot in")
 
-    def test_neutral_retried_until_delivered_when_receiver_present_but_refusing(self):
+    def test_clear_retried_until_delivered_when_receiver_present_but_refusing(self):
         c, clock, sender, _, _ = make_coordinator(Limits(lease=2, reaper=1, exit_grace=5, final_grace=40))
         activate(c, [working(1)])
-        sender.refuse = {"events.sock", "relay-events.sock"}
+        sender.refuse = {SOCKET}
         advance(c, clock, 3)
         self.assertEqual(combined_mode(c), "idle_ready")
-        # Both families still hold "working": the coordinator must not leave after the short grace.
+        # SidePulse still shows the row: the coordinator must not leave after the short grace.
         self.assertIsNone(advance(c, clock, 10))
+        self.assertEqual(sender.shown(), {scope(1): ("working", "OMP in Tern")})
         sender.refuse = set()
         advance(c, clock, 3)
-        self.assertEqual(sender.modes_for("events.sock")[-1], "idle_ready")
-        self.assertEqual(sender.modes_for("relay-events.sock")[-1], "idle_ready")
+        self.assertEqual(sender.states(), ["working", "clear"])
+        self.assertEqual(sender.shown(), {})
         self.assertEqual(advance(c, clock, 6), "exit")
 
     def test_final_grace_bounds_the_wait(self):
         c, clock, sender, logs, _ = make_coordinator(Limits(lease=2, reaper=1, exit_grace=5, final_grace=20))
         activate(c, [working(1)])
-        sender.refuse = {"events.sock", "relay-events.sock"}
+        sender.refuse = {SOCKET}
         advance(c, clock, 3)
         self.assertEqual(advance(c, clock, 25), "exit")
         self.assertTrue(any("final grace" in line for line in logs))
+        self.assertEqual(sender.shown(), {scope(1): ("working", "OMP in Tern")})
+        self.assertEqual(c.transport.ledger.scopes, {scope(1)}, "a successor must still be able to clear the row")
 
     def test_absent_receiver_does_not_block_exit(self):
         c, clock, _, _, _ = make_coordinator(Limits(lease=2, reaper=1, exit_grace=5, final_grace=60), receivers_up=False)
         activate(c, [working(1)])
         advance(c, clock, 3)
-        self.assertEqual(advance(c, clock, 6), "exit", "nothing was ever delivered, so there is nothing to neutralize")
-
-    def test_startup_neutral_retried_while_a_present_receiver_refuses(self):
-        c, clock, sender, _, _ = make_coordinator(Limits(exit_grace=5, final_grace=20), receivers_up=False)
-        sender.up("events.sock")
-        sender.refuse = {"events.sock"}
-        c.transport.set_desired("idle_ready", force=True)
-        c.transport.tick()
-        self.assertIsNone(advance(c, clock, 8), "a present receiver that never took the startup neutral keeps the coordinator alive")
-        sender.refuse = set()
-        sender.down("events.sock")
-        sender.up("events.sock")  # a restarted receiver binds a new socket inode
-        advance(c, clock, 1)
-        self.assertEqual(sender.modes_for("events.sock")[-1], "idle_ready")
+        self.assertEqual(advance(c, clock, 6), "exit", "nothing was ever delivered, so no visible row needs clearing")
 
 
 class ClockDiscontinuityTest(unittest.TestCase):
@@ -102,7 +93,8 @@ class ClockDiscontinuityTest(unittest.TestCase):
         # The first request after wake must not see pre-sleep state.
         ack = snapshot(c, gen_a, epoch, 2, [idle(1)])
         self.assertEqual(ack["rows"], {"idle_ready": 1})
-        self.assertEqual(sender.modes_for("events.sock")[-1], "idle_ready")
+        self.assertEqual(sender.shown(), {scope(1): ("idle", "OMP in Tern")})
+        self.assertEqual(sender.states(), ["done", "working", "clear", "idle"])
         self.assertEqual(c.discontinuities, 1)
         self.assertTrue(c.observers["4242:2"].uncertain)
         # Its own fresh snapshot restores the other window's work.
@@ -142,21 +134,22 @@ class InternalErrorTest(unittest.TestCase):
 
 
 class ShutdownTest(unittest.TestCase):
-    def test_final_neutral_ignores_retry_spacing(self):
+    def test_final_clear_ignores_retry_spacing(self):
         # A refresh failed 0.3 s ago (receiver restarting on the same socket); the graceful exit is
-        # the last attempt this process makes, so the 1 s spacing must not skip it.
+        # the last attempt this process makes, so backoff must not skip it.
         c, clock, sender, _, _ = make_coordinator()
         activate(c, [working(1)])
-        self.assertEqual(sender.modes_for("events.sock")[-1], "working")
-        sender.refuse.add("events.sock")
+        self.assertEqual(sender.states(), ["working"])
+        sender.refuse.add(SOCKET)
         c.op_resync({})
-        ui = c.transport.families[0]
-        self.assertEqual((ui.failures, ui.pending), (1, True))
-        sender.refuse.discard("events.sock")
+        status = c.status()["transport"]
+        self.assertEqual((status["failures"], status["pending"]), (1, 1))
+        sender.refuse.discard(SOCKET)
         clock.advance(0.3)
         c.shutdown()
-        self.assertEqual(sender.modes_for("events.sock")[-1], "idle_ready", "neutral went out on the way down")
-        self.assertEqual(sender.modes_for("relay-events.sock")[-1], "idle_ready")
+        self.assertEqual(sender.states(), ["working", "clear"], "the row was cleared on the way down")
+        self.assertEqual(sender.shown(), {})
+        self.assertEqual(c.transport.ledger.scopes, set())
 
 
 if __name__ == "__main__":

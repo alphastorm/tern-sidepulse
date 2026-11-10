@@ -110,7 +110,15 @@ for i, char in ipairs(characters) do
 	assert(#label <= 256 and utf8.len(label) ~= nil, "L7: bounded valid UTF-8 label")
 end
 H.complete(0, H.SNAP_OK)
-print("L7  UTF-8 prefix bytes: 256 255 256")
+-- Bytes 1..257 all continuation bytes (invalid UTF-8): no complete character, so no label bytes at all.
+local invalid = 74
+table.insert(H.world.agents, { pane = invalid, state = "idle", kind = "agent", program = "omp", host = 0, alive = true })
+H.world.roles[invalid] = "omp.session"
+table.insert(H.world.panes, { pane = invalid, title = string.rep("\x80", 300), tab = 107 })
+local cut_invalid = snapshot()
+assert(observation(cut_invalid, invalid).label == "", "L7: a title of continuation bytes yields an empty label, never the whole title")
+H.complete(0, H.SNAP_OK)
+print("L7  UTF-8 prefix bytes: 256 255 256; continuation-only title: 0")
 
 -- L9: unavailable optional APIs never suppress status or invent labels.
 one_pane(19, "Available title", 109)

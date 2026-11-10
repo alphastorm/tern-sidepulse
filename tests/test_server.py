@@ -6,7 +6,7 @@ import time
 import unittest
 from pathlib import Path
 
-from tests.helpers import FakeReceiver, RecordingSender, helper_argv, short_tmpdir, subprocess_env
+from tests.helpers import FakeProgramServer, RecordingSender, helper_argv, kill_coordinator, run_bridge, short_tmpdir, subprocess_env
 
 from tern_sidepulse.clock import Clock
 from tern_sidepulse.coordinator import Coordinator
@@ -21,13 +21,14 @@ class ServerFixture:
     def __init__(self, limits: Limits) -> None:
         self.runtime = short_tmpdir("tsp-srv-")
         self.sender = RecordingSender(self.runtime)
-        self.sender.up("events.sock")
-        self.sender.up("relay-events.sock")
+        self.sender.up()
         self.logs: list[str] = []
-        transport = SidePulseTransport.for_receivers(
-            "tern-sidepulse:test", Clock(), (self.runtime / "events.sock",), (self.runtime / "relay-events.sock",), sender=self.sender, log=self.logs.append
+        clock = Clock()
+        transport = SidePulseTransport(
+            clock=clock, candidates=(self.sender.path(),), ledger_path=self.runtime / "program-scopes.json",
+            salt="test-install", sender=self.sender, log=self.logs.append
         )
-        self.coordinator = Coordinator(clock=Clock(), transport=transport, limits=limits, disabled=False, persist_disabled=lambda _f: None, log=self.logs.append)
+        self.coordinator = Coordinator(clock=clock, transport=transport, limits=limits, disabled=False, persist_disabled=lambda _f: None, log=self.logs.append)
         self.server = Server(self.coordinator, self.runtime, limits, self.logs.append, lock_fd=acquire_lock(self.runtime))
         self.thread = threading.Thread(target=self.server.run, kwargs={"install_signals": False}, daemon=True)
         self.thread.start()
@@ -94,12 +95,14 @@ class ProtocolTest(unittest.TestCase):
         ack = self.fx.call({"schema": 1, "op": "snapshot", "observer": {"parent_pid": 1, "window_key": ""}, "epoch": reg["epoch"], "generation": reg["generation"], "seq": 1, "coverage": "complete", "observations": [{"pane": 1, "state": "working"}]})
         self.assertEqual(ack["rows"], {"working": 1})
         slow = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(slow.close)
         slow.connect(str(self.fx.socket_path))
         slow.sendall(b'{"schema": 1, "op": "sta')  # never finishes
         deadline = time.monotonic() + 3
-        while time.monotonic() < deadline and self.fx.sender.modes_for("events.sock")[-1] != "idle_ready":
+        while time.monotonic() < deadline and self.fx.sender.rows:
             time.sleep(0.05)
-        self.assertEqual(self.fx.sender.modes_for("events.sock")[-1], "idle_ready", "the 1 s lease expired and neutral went out while a partial client hung")
+        self.assertEqual(self.fx.sender.states(), ["working", "clear"], "the lease expired and the row was cleared while a partial client hung")
+        self.assertEqual(self.fx.sender.shown(), {})
         self.assertTrue(any("did not finish" in line for line in self.fx.logs))
         slow.close()
 
@@ -129,32 +132,41 @@ class ProtocolTest(unittest.TestCase):
 
 
 class SingletonTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = short_tmpdir("tsp-single-")
+        self.receiver = FakeProgramServer(self.tmp / "program-status.sock")
+        self.receiver.start()
+        self.env = subprocess_env(self.tmp, self.receiver.path, {"lease": 2, "reaper": 0.2, "exit_grace": 60, "final_grace": 120})
+        self.procs = []
+
+    def tearDown(self):
+        kill_coordinator(self.env)
+        for proc in self.procs:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=5)
+        self.receiver.stop()
+
     def test_two_coordinators_only_one_survives_and_the_loser_sends_nothing(self):
-        tmp = short_tmpdir("tsp-single-")
-        ui = FakeReceiver(tmp / "events.sock")
-        svc = FakeReceiver(tmp / "relay-events.sock")
-        ui.start()
-        svc.start()
-        env = subprocess_env(tmp, ui.path, svc.path, {"lease": 2, "reaper": 0.2, "exit_grace": 1, "final_grace": 5})
-        argv = [*helper_argv(env), "coordinator", "--runtime-dir", env["TERN_SIDEPULSE_RUNTIME_DIR"], "--data-dir", env["TERN_PLUGIN_DATA"], "--ui-socket", str(ui.path), "--service-socket", str(svc.path), "--limits", env["TERN_SIDEPULSE_LIMITS"]]
-        procs = [subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for _ in range(2)]
-        try:
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline and all(p.poll() is None for p in procs):
-                time.sleep(0.05)
-            alive = [p for p in procs if p.poll() is None]
-            self.assertEqual(len(alive), 1, "exactly one coordinator holds the lock")
-            lock_pid = int((Path(env["TERN_SIDEPULSE_RUNTIME_DIR"]) / "coordinator.lock").read_text().strip())
-            self.assertEqual(lock_pid, alive[0].pid)
-            time.sleep(1.5)
-            self.assertTrue(ui.wait_for("idle_ready", timeout=5))
-            self.assertEqual(len(ui.events), 1, "the loser must not send its own startup neutral")
-        finally:
-            for p in procs:
-                if p.poll() is None:
-                    p.kill()
-            ui.stop()
-            svc.stop()
+        argv = [*helper_argv(self.env), "coordinator", "--runtime-dir", self.env["TERN_SIDEPULSE_RUNTIME_DIR"], "--data-dir", self.env["TERN_PLUGIN_DATA"], "--program-socket", str(self.receiver.path), "--limits", self.env["TERN_SIDEPULSE_LIMITS"]]
+        self.procs = [subprocess.Popen(argv, env=self.env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for _ in range(2)]
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and all(p.poll() is None for p in self.procs):
+            time.sleep(0.05)
+        alive = [p for p in self.procs if p.poll() is None]
+        self.assertEqual(len(alive), 1, "exactly one coordinator holds the lock")
+        lock_pid = int((Path(self.env["TERN_SIDEPULSE_RUNTIME_DIR"]) / "coordinator.lock").read_text().strip())
+        self.assertEqual(lock_pid, alive[0].pid)
+        self.assertEqual(self.receiver.reports, [], "neither contender invents a startup row")
+        _, reg, _ = run_bridge(["register"], {}, self.env)
+        self.assertEqual(reg["coordinator_pid"], alive[0].pid)
+        _, ack, _ = run_bridge(["snapshot"], {
+            "epoch": reg["epoch"], "generation": reg["generation"], "seq": 1,
+            "coverage": "complete", "observations": [{"pane": 1, "state": "working"}],
+        }, self.env)
+        self.assertTrue(ack["ok"], ack)
+        self.assertTrue(self.receiver.wait_for(lambda rx: rx.states() == ["working"]))
+        self.assertEqual(len(self.receiver.rows), 1, "the winning coordinator alone publishes the session")
 
 
 if __name__ == "__main__":

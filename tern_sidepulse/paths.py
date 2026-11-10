@@ -5,9 +5,9 @@ Two directories matter:
 * the Tern plugin data directory (``TERN_PLUGIN_DATA`` / ``--data-dir``): the stable
   bridge identity, configuration and the disabled latch, which Tern keeps across plugin
   reinstalls;
-* the bridge runtime directory: the coordinator socket, its singleton lock, the log and the
-  doctor report. It is user-private, derived from ``HOME`` only (a Dock-launched Tern and a
-  terminal must agree on it), and short enough for a macOS ``sun_path``.
+* the bridge runtime directory: the coordinator socket, its singleton lock, the log, the doctor
+  report and the ledger of SidePulse scopes. It is user-private, derived from ``HOME`` only (a
+  Dock-launched Tern and a terminal must agree on it), and short enough for a macOS ``sun_path``.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ SOCKET_NAME = "coordinator.sock"
 LOCK_NAME = "coordinator.lock"
 LOG_NAME = "coordinator.log"
 DOCTOR_NAME = "doctor.json"
+LEDGER_NAME = "program-scopes.json"
 IDENTITY_NAME = "identity.json"
 CONFIG_NAME = "config.json"
 DISABLED_NAME = "disabled"
@@ -84,22 +85,17 @@ def sidepulse_state_dirs(home: Path | None = None) -> tuple[Path, ...]:
     return tuple(dirs)
 
 
-def sidepulse_ui_sockets(home: Path | None = None) -> tuple[Path, ...]:
-    """The menu-bar app's ``events.sock`` candidates."""
-    return tuple(directory / "events.sock" for directory in sidepulse_state_dirs(home))
-
-
-def sidepulse_relay_socket_for_dir(state_dir: Path) -> Path:
-    """Upstream's ``relay_socket_path_for_state_dir``: a /tmp fallback when the path is over 96 bytes."""
-    path = state_dir / "relay-events.sock"
+def sidepulse_program_socket_for_dir(state_dir: Path) -> Path:
+    """Upstream's ``status_socket_path``: a private /tmp fallback when the path is over 96 bytes."""
+    path = state_dir / "program-status.sock"
     if len(str(path).encode("utf-8")) <= 96:
         return path
     import hashlib
 
     digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
-    return Path("/tmp") / f"sidepulse-relay-{os.getuid()}-{digest}.sock"
+    return Path("/tmp") / f"sidepulse-status-{os.getuid()}" / f"{digest}.sock"
 
 
-def sidepulse_service_sockets(home: Path | None = None) -> tuple[Path, ...]:
-    """The headless service's ``relay-events.sock`` candidates (a local socket despite the name)."""
-    return tuple(sidepulse_relay_socket_for_dir(directory) for directory in sidepulse_state_dirs(home))
+def sidepulse_program_sockets(home: Path | None = None) -> tuple[Path, ...]:
+    """The SidePulse service's ``program-status.sock`` candidates, most likely first."""
+    return tuple(sidepulse_program_socket_for_dir(directory) for directory in sidepulse_state_dirs(home))

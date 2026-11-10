@@ -6,14 +6,14 @@
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#060809">
 <title>tern-sidepulse — your Oh My Pi (OMP) sessions in Tern, on SidePulse</title>
-<meta name="description" content="Keep running Oh My Pi (OMP) inside Tern. tern-sidepulse sends one status from your open Tern windows, local and remote, to SidePulse: working, waiting, done, failed.">
+<meta name="description" content="Keep running Oh My Pi (OMP) inside Tern. tern-sidepulse shows each OMP session in your open Tern windows, local and remote, as its own row on SidePulse: working, waiting, done, failed.">
 <link rel="canonical" href="https://alphastorm.github.io/tern-sidepulse/">
 <link rel="preload" href="fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="site.css">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <meta property="og:title" content="tern-sidepulse — your Oh My Pi (OMP) sessions in Tern, on SidePulse">
-<meta property="og:description" content="Keep running Oh My Pi (OMP) inside Tern. tern-sidepulse sends one status from your open Tern windows, local and remote, to SidePulse: working, waiting, done, failed.">
+<meta property="og:description" content="Keep running Oh My Pi (OMP) inside Tern. tern-sidepulse shows each OMP session in your open Tern windows, local and remote, as its own row on SidePulse: working, waiting, done, failed.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://alphastorm.github.io/tern-sidepulse/">
 <meta property="og:image" content="https://alphastorm.github.io/tern-sidepulse/og.png">
@@ -53,7 +53,7 @@
     <div>
       <p class="eyebrow">Tern window plugin · <span class="nowrap"><span class="kin" aria-hidden="true"></span> Oh My Pi sessions</span></p>
       <h1><span class="line">Your OMP sessions in Tern.</span> <span class="line accent">On SidePulse.</span></h1>
-      <p class="lede">Keep running Oh My Pi inside Tern. tern-sidepulse watches the OMP panes in your open Tern windows, local and remote, and sends one status to SidePulse — working, waiting for input, completed, failed, or idle — so the LEDs and the menu bar tell you when a session needs you. The plugin never reads a transcript, submits a prompt, approves an action, or changes a window layout.</p>
+      <p class="lede">Keep running Oh My Pi inside Tern. tern-sidepulse watches the OMP panes in your open Tern windows, local and remote, and reports one row per session to SidePulse — working, waiting for input, completed, failed, or idle, named after its tab or pane — so the LEDs and the menu bar tell you when a session needs you. The plugin never reads a transcript, submits a prompt, approves an action, or changes a window layout.</p>
       <div class="actions">
         <a class="cta" href="#install">Get started</a>
         <a class="cta secondary" href="https://github.com/alphastorm/tern-sidepulse/releases/latest">Latest release</a>
@@ -61,7 +61,7 @@
       <ul class="facts" aria-label="Requirements">
         <li class="label" aria-hidden="true">Requires</li>
         <li>Tern 0.9.12+</li>
-        <li>SidePulse agent monitor on the same Mac</li>
+        <li>SidePulse with program status (<code>sidepulse update</code>, 2026-11-10+)</li>
         <li>Python 3.10+</li>
         <li>macOS</li>
       </ul>
@@ -78,9 +78,9 @@
     <div class="section-head">
       <div>
         <p class="eyebrow">What you see</p>
-        <h2>One status, the most actionable one.</h2>
+        <h2>One row per session, the most urgent on the LEDs.</h2>
       </div>
-      <p>The OMP sessions visible in your open Tern windows combine into one session on SidePulse, including sessions on attached remote hosts. The strips show SidePulse's default LED programs; your configured animations apply.</p>
+      <p>Each OMP session visible in your open Tern windows, including sessions on attached remote hosts, appears as its own row in SidePulse's Agents list, named after its tab or pane. SidePulse drives the LEDs from the highest-priority state across your monitored agents; your configured animations apply.</p>
     </div>
     <ul class="states" aria-label="OMP conditions and SidePulse statuses">
       <li>
@@ -121,11 +121,11 @@
           <span class="program">Idle Pulse</span>
         </div>
         <span class="status"><code>idle_ready</code></span>
-        <p class="condition">Nothing visible, or all idle <span class="note">(clears this plugin's status)</span></p>
+        <p class="condition">Session open at the prompt <span class="note">(cleared when the pane or window closes)</span></p>
       </li>
     </ul>
 
-    <p class="small measure">Closing a pane, losing a host connection, disabling the plugin, or closing the last window clears the status within about 20 s. Multiple Tern windows combine into one session on SidePulse: duplicates across windows are reduced, never counted.</p>
+    <p class="small measure">Closing a pane, losing a host connection, disabling the plugin, or closing the last window clears the row within about 20 s. Multiple Tern windows viewing the same session deduplicate into one row on SidePulse (up to 32 rows, most urgent first).</p>
   </div>
 </section>
 
@@ -134,15 +134,15 @@
     <div class="section-head">
       <div>
         <p class="eyebrow">How it works</p>
-        <h2>From window state to one status.</h2>
+        <h2>From window state to per-session rows.</h2>
       </div>
-      <p>Each window sends a complete snapshot. One local coordinator combines the windows and delivers the result to both SidePulse receivers.</p>
+      <p>Each window sends a complete snapshot. One local coordinator deduplicates panes across windows and delivers one acknowledged <code>program_status</code> report per session to SidePulse.</p>
     </div>
     <ol class="pipeline">
       <li>
         <span class="node"><code>window.luau</code></span>
         <span class="where">each Tern window</span>
-        <p>Observes <code>cx.agents:list()</code> every 5 s and on agent events. Keeps OMP panes on connected hosts whose surface role is <code>omp.session</code>; sends a complete snapshot.</p>
+        <p>Observes <code>cx.agents:list()</code> every 5 s and on agent events. Keeps OMP panes on connected hosts whose surface role is <code>omp.session</code>; sends a complete snapshot with tab or pane labels.</p>
       </li>
       <li>
         <span class="node"><code>bridge.py</code></span>
@@ -152,17 +152,12 @@
       <li>
         <span class="node">coordinator</span>
         <span class="where">one per user</span>
-        <p>Singleton lock, 15 s leases, and priority failed › waiting › working › finished › idle. Bounded retry; clears and exits 5 s after the last lease ends (60 s cap if SidePulse is unreachable).</p>
-      </li>
-      <li>
-        <span class="node"><code>events.sock</code></span>
-        <span class="where">SidePulse menu-bar app</span>
-        <p>Receives the combined status through a private local socket.</p>
+        <p>Holds a singleton lock and 15 s window leases, deduplicates panes across windows (<code>blocked_error</code> › <code>waiting_for_input</code> › <code>working</code> › <code>completed</code> › <code>idle_ready</code>), and records scopes in <code>program-scopes.json</code> for crash recovery.</p>
       </li>
       <li class="handoff">
-        <span class="node"><code>relay-events.sock</code></span>
-        <span class="where">SidePulse headless service</span>
-        <p>Receives the same status independently of the menu-bar app.</p>
+        <span class="node"><code>program-status.sock</code></span>
+        <span class="where">SidePulse service</span>
+        <p>Receives one <code>program_status</code> report per OMP session (salted scope hash, state, and label) over a private local socket.</p>
       </li>
     </ol>
     <p class="small section-note">Full detail: <a href="https://github.com/alphastorm/tern-sidepulse#how-it-works">How it works</a> · <a href="https://github.com/alphastorm/tern-sidepulse/blob/main/docs/compatibility.md">compatibility and the SidePulse wire contract</a>.</p>
@@ -174,15 +169,15 @@
     <div class="section-head">
       <div>
         <p class="eyebrow">Private by design</p>
-        <h2>Six agent fields in, one status out.</h2>
+        <h2>Six agent fields in, hashed scopes out.</h2>
       </div>
-      <p>The plugin never reads working directories, model names, prompts, assistant text, tool arguments, or transcript paths. OMP tab names and pane titles stay in the coordinator's memory and are never logged or sent to SidePulse.</p>
+      <p>The plugin never reads working directories, model names, prompts, assistant text, tool arguments, or transcript paths. SidePulse reports carry salted scope hashes rather than host keys or pane ids, and setting <code>"labels": false</code> in <code>config.json</code> stops sending tab and pane titles to SidePulse.</p>
     </div>
     <ul class="grid three">
-      <li><h3>Reads six agent fields, never transcripts</h3><p><code>pane</code>, <code>state</code>, <code>kind</code>, <code>program</code>, <code>host</code>, <code>alive</code> from each agent row, plus host keys and each pane's <code>surface.role</code>. OMP tab names and pane titles stay in coordinator memory only (<a href="https://github.com/alphastorm/tern-sidepulse/blob/main/tests/test_privacy.py"><code>tests/test_privacy.py</code></a>).</p></li>
-      <li><h3>Nothing listens on the network</h3><p>The helper, coordinator, and SidePulse receivers communicate through private local sockets. Live observations stay in memory only; a restart never replays a stale prompt.</p></li>
-      <li><h3>Private local files and sockets</h3><p><code>~/.local/state/tern-sidepulse</code> has mode <code>0700</code>; ownership is checked and symlinks are refused. Runtime and state files are written with mode <code>0600</code>.</p></li>
-      <li><h3>Bounded requests and state</h3><p>Window snapshots are budgeted to 192 KiB and coordinator requests are capped at 1 MiB across at most 32 concurrent connections. State is capped at 64 windows and 512 panes per window.</p></li>
+      <li><h3>Reads six agent fields, never transcripts</h3><p><code>pane</code>, <code>state</code>, <code>kind</code>, <code>program</code>, <code>host</code>, <code>alive</code> from each agent row, plus host keys, each pane's <code>surface.role</code>, and tab or pane titles. Labels go only to SidePulse (unless <code>"labels": false</code> is set) and never to logs, status, or disk (<a href="https://github.com/alphastorm/tern-sidepulse/blob/main/tests/test_privacy.py"><code>tests/test_privacy.py</code></a>).</p></li>
+      <li><h3>Salted scopes and local sockets</h3><p>Host keys never appear outside coordinator memory, and pane ids and host keys never leave the Mac: each row's SidePulse scope and <code>program-scopes.json</code> hold salted SHA-256 hashes only. Only if you configured a SidePulse relay or phone link does SidePulse forward labels, as it does Claude and Codex titles.</p></li>
+      <li><h3>Private local files and sockets</h3><p><code>~/.local/state/tern-sidepulse</code> has mode <code>0700</code>; ownership is checked and symlinks are refused. Runtime, ledger, and state files are written with mode <code>0600</code>.</p></li>
+      <li><h3>Bounded requests and state</h3><p>Window snapshots are budgeted to 192 KiB and coordinator requests are capped at 1 MiB across at most 32 concurrent connections. State is capped at 64 windows, 512 panes per window, and 32 delivered SidePulse rows.</p></li>
       <li><h3>Isolated helper execution</h3><p>Argument vectors, never a shell; <code class="nowrap">-I -S</code> isolation and a 4 s timeout. Failed calls back off at <code>500 · 2ⁿ</code> ms, capped at 30 s.</p></li>
       <li><h3>Remote hosts need nothing installed</h3><p>No SidePulse, no helper, and no service on a remote host. OMP sessions are observed through the open Tern window connected to that host.</p></li>
     </ul>
@@ -204,7 +199,7 @@
         <h3>You need</h3>
         <ul>
           <li><span class="k">Tern</span><span class="v">Tern 0.9.12 or later on macOS</span></li>
-          <li><span class="k">SidePulse</span><span class="v">SidePulse's agent monitor on the same Mac: the menu-bar app, the headless service, or both</span></li>
+          <li><span class="k">SidePulse</span><span class="v">SidePulse on the same Mac at a build that includes <a href="https://github.com/inteliwear/sidepulse/pull/72">#72</a> (<code>sidepulse update</code> on or after 2026-11-10; use <code>tern-sidepulse</code> 0.1.0 for older SidePulse)</span></li>
           <li><span class="k">Python</span><span class="v">Python 3.10+ at a known absolute path — Homebrew, a versioned interpreter, python.org, or Command Line Tools. Nothing is installed with <code>pip</code>.</span></li>
           <li><span class="k">Remote hosts</span><span class="v">Nothing to install</span></li>
         </ul>
@@ -229,11 +224,11 @@ tern plugin reload tern-sidepulse</code></pre></div>
         </li>
         <li>
           <h3>Confirm it works</h3>
-          <p>Wait about 5 s after installing or linking. Open the Tern command palette and run <code>tern-sidepulse: doctor</code>. Expect a toast starting with <code>ok:</code> (<code>ok: 0 issue(s); socket delivery is not an LED check</code>). A toast starting with <code>warn:</code> names a check that needs attention.</p>
+          <p>Wait about 5 s after installing or linking. Open the Tern command palette and run <code>tern-sidepulse: doctor</code>. Expect a toast starting with <code>ok:</code> (<code>ok: 0 issue(s); an accepted report is not an LED check</code>). A toast starting with <code>warn:</code> or <code>error:</code> names a check that needs attention, such as <code>receiver</code>.</p>
         </li>
         <li>
           <h3>Watch SidePulse</h3>
-          <p>Check SidePulse's menu-bar app, or <code>~/.local/state/sidepulse/agent-monitor/latest.json</code> when running headless. While an OMP session works or waits, one session from origin <code>Tern</code> (<code>OMP in Tern</code>) appears.</p>
+          <p>Check SidePulse's menu-bar Agents list, or run <code>sidepulse status</code> when running headless. Each OMP session in your open Tern windows appears as its own row from origin <code>Tern</code>, labelled by its tab or pane title (<code>OMP in Tern</code> when unlabelled or when <code>"labels": false</code> is set).</p>
         </li>
       </ol>
     </div>
@@ -250,11 +245,11 @@ tern plugin reload tern-sidepulse</code></pre></div>
       <p>The compatibility record names the exact versions and observations. Untested lifecycle cases stay explicit.</p>
     </div>
     <ul class="evidence">
-      <li><span class="k">Exercised</span><span class="v">Tern 0.9.12 (<code>e498b49</code>) · OMP 18.16.0</span><span class="s">SidePulse revision <code>ffb1d3c2</code> (<code>0.2.4.dev6+gffb1d3c2f</code>), macOS 27.2 on Apple Silicon, and a remote Mac Studio over Tern remoting; a 78 s sleep/wake, a full Tern quit and relaunch, and a remote disconnect/reconnect, each read from the coordinator log and SidePulse's own state files.</span></li>
-      <li><span class="k">Automated</span><span class="v">Unit and integration suite on Python 3.10 and 3.13 in CI</span><span class="s">Plus <code>luau-lsp</code> analysis and the headless Luau 0.745 harness for <code>window.luau</code>.</span></li>
+      <li><span class="k">Exercised</span><span class="v">Tern 0.9.16 (<code>41a10a5</code>) · OMP 18.18.7</span><span class="s">SidePulse revision <code>ad4a5217</code> (<code>0.2.4.dev36+gad4a5217f</code>, the <code>inteliwear/sidepulse#72</code> merge) on macOS 27.2.1 (Apple Silicon): live rows, unlink clear, the 0.1.0-to-0.2.0 coordinator hand-off and a coordinator crash. The 78 s sleep/wake, full Tern quit and relaunch, and remote disconnect/reconnect checks ran with <code>tern-sidepulse</code> 0.1.0 on Tern 0.9.12 against SidePulse <code>ffb1d3c2</code>, including a remote Mac Studio over Tern remoting.</span></li>
+      <li><span class="k">Automated</span><span class="v">Unit, transport, and integration suite on Python 3.10 and 3.13 in CI</span><span class="s">Plus <code>luau-lsp</code> analysis, the headless Luau 0.745 harness for <code>window.luau</code>, and the SidePulse <code>ad4a5217</code> contract test.</span></li>
       <li><span class="k">Not yet exercised</span><span class="v">A remote host that stays listed but drops to a non-connected state</span><span class="s">And the two-window close-one case with OMP sessions in both windows.</span></li>
     </ul>
-    <p class="small section-note">Timings come from socket and state-file records; a socket write is not an LED check. Read the <a href="https://github.com/alphastorm/tern-sidepulse/blob/main/docs/compatibility.md">compatibility and contract probe</a>.</p>
+    <p class="small section-note">Timings come from socket and state-file records; an accepted report is not an LED check. Read the <a href="https://github.com/alphastorm/tern-sidepulse/blob/main/docs/compatibility.md">compatibility and contract probe</a>.</p>
   </div>
 </section>
 
@@ -265,11 +260,11 @@ tern plugin reload tern-sidepulse</code></pre></div>
         <p class="eyebrow">A narrow job</p>
         <h2>Use something else when you want more than a status.</h2>
       </div>
-      <p>This plugin reports one combined status from the OMP sessions in your open Tern windows. It is not a remote client or an always-on remote monitor.</p>
+      <p>This plugin reports per-session status from the OMP panes in your open Tern windows. It is not a remote client or an always-on remote monitor.</p>
     </div>
     <ul class="alts">
       <li><span class="want">Open or answer an OMP session from your phone</span><span class="use"><a href="https://github.com/carrythroughsystems/omp-session-gateway">OMP Session Gateway</a></span></li>
-      <li><span class="want">Each pane as its own SidePulse session</span><span class="use">Not in this release — one combined session.</span></li>
+      <li><span class="want">More than 32 concurrent OMP sessions on SidePulse</span><span class="use">Capped at 32 rows (most urgent first) so SidePulse's 64-row table is not exhausted.</span></li>
       <li><span class="want">Status for remote hosts with no Tern window open</span><span class="use">Not this — remote hosts follow open windows.</span></li>
       <li><span class="want">Tern outside macOS</span><span class="use">Not supported.</span></li>
     </ul>

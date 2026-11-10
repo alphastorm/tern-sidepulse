@@ -1,7 +1,7 @@
 """Persistent bits: the stable bridge identity, user configuration, the disabled latch and a bounded log.
 
-Only configuration and identity persist. Observations never touch disk, so a coordinator
-restart cannot resurrect an old approval.
+Observations never touch disk, so a coordinator restart cannot resurrect an old approval. The only
+other file written for SidePulse is the transport's scope ledger, which holds salted hashes.
 """
 from __future__ import annotations
 
@@ -15,10 +15,9 @@ from .paths import CONFIG_NAME, DISABLED_NAME, IDENTITY_NAME, LOG_NAME, PLUGIN_I
 
 MAX_LOG_BYTES = 1024 * 1024
 MAX_CONFIG_BYTES = 65536  # the window half reads it with the same cap
-SESSION_PREFIX = f"{PLUGIN_ID}:"
 
 
-def _write_atomic(path: Path, text: str, mode: int = 0o600) -> None:
+def write_atomic(path: Path, text: str, mode: int = 0o600) -> None:
     temp = path.with_name(path.name + f".{os.getpid()}.tmp")
     with open(temp, "w", encoding="utf-8") as handle:
         handle.write(text)
@@ -60,12 +59,8 @@ def load_identity(data_dir: Path, create: bool = True) -> dict | None:
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "plugin": PLUGIN_ID,
     }
-    _write_atomic(path, json.dumps(data, indent=2) + "\n")
+    write_atomic(path, json.dumps(data, indent=2) + "\n")
     return data
-
-
-def session_id_for(identity: dict) -> str:
-    return SESSION_PREFIX + identity["install_id"]
 
 
 def load_config(data_dir: Path) -> dict:
@@ -99,7 +94,7 @@ def set_disabled(data_dir: Path, disabled: bool) -> None:
     path = data_dir / DISABLED_NAME
     if disabled:
         data_dir.mkdir(parents=True, exist_ok=True)
-        _write_atomic(path, datetime.now(timezone.utc).isoformat(timespec="seconds") + "\n")
+        write_atomic(path, datetime.now(timezone.utc).isoformat(timespec="seconds") + "\n")
     else:
         try:
             path.unlink()

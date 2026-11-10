@@ -1,0 +1,17 @@
+{
+  "servers": {
+    "luau-lsp": {
+      "command": "luau-lsp",
+      "args": ["lsp", "--definitions=@tern=types/tern.d.luau"],
+      "fileTypes": [".luau"],
+      "languageId": "luau",
+      "rootMarkers": ["plugin.toml"],
+      "settings": {
+        "luau-lsp": {
+          "platform": { "type": "standard" },
+          "sourcemap": { "enabled": false }
+        }
+      }
+    }
+  }
+}

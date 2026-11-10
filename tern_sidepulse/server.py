@@ -14,7 +14,7 @@ from typing import Callable
 
 from .coordinator import Coordinator, ProtocolError, crash_site, decode_request
 from .limits import Limits
-from .paths import LOCK_NAME, SOCKET_NAME, ensure_private_dir
+from .paths import LEDGER_NAME, LOCK_NAME, SOCKET_NAME, ensure_private_dir
 
 RESPONSE_TIMEOUT = 0.5
 MAX_CONNECTIONS = 32
@@ -202,12 +202,12 @@ def run_coordinator(
     runtime: Path,
     data_dir: Path,
     limits: Limits,
-    ui_sockets: tuple[Path, ...],
-    service_sockets: tuple[Path, ...],
+    program_sockets: tuple[Path, ...],
+    labels: bool,
 ) -> int:
     """Lock first; everything that may write to disk or SidePulse happens under the lock."""
     from .clock import Clock
-    from .storage import BoundedLog, is_disabled, load_identity, session_id_for, set_disabled
+    from .storage import BoundedLog, is_disabled, load_identity, set_disabled
     from .transport import SidePulseTransport
 
     os.umask(0o077)  # every file this process creates is private from the start
@@ -224,7 +224,15 @@ def run_coordinator(
         identity = load_identity(data_dir, create=True)
         assert identity is not None
         clock = Clock()
-        transport = SidePulseTransport.for_receivers(session_id_for(identity), clock, ui_sockets, service_sockets, log=log)
+        transport = SidePulseTransport(
+            clock=clock,
+            candidates=program_sockets,
+            ledger_path=runtime / LEDGER_NAME,
+            salt=identity["install_id"],
+            labels=labels,
+            inherit_grace=limits.lease,
+            log=log,
+        )
         coordinator = Coordinator(
             clock=clock,
             transport=transport,

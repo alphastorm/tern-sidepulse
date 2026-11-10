@@ -18,7 +18,7 @@ class NoticeTest(unittest.TestCase):
             self.assertEqual(combined_mode(c), "completed")
         advance(c, clock, 1.01)
         self.assertEqual(combined_mode(c), "idle_ready")
-        self.assertEqual(sender.modes_for("events.sock")[-2:], ["completed", "idle_ready"])
+        self.assertEqual(sender.states(), ["done", "idle"])
 
     def test_failed_notice_lasts_longer_than_done(self):
         c, clock, _, _, _ = make_coordinator(Limits(done_notice=15, failed_notice=30))

@@ -1,6 +1,6 @@
 import unittest
 
-from tests.helpers import activate, combined_mode, idle, make_coordinator, rows, snapshot, waiting, working
+from tests.helpers import activate, combined_mode, idle, make_coordinator, rows, scope, snapshot, waiting, working
 
 from tern_sidepulse.reducer import pane_mode, reduce_rows
 
@@ -34,7 +34,11 @@ class ReductionThroughCoordinatorTest(unittest.TestCase):
         self.assertEqual(combined_mode(c), "working")
         self.assertEqual(len(rows(c)), 4)
         self.assertTrue(all(row[2] == "working" for row in rows(c)))
-        self.assertEqual(sender.modes_for("events.sock"), ["idle_ready", "waiting_for_input", "working"])
+        self.assertEqual(sender.shown(), {scope(pane): ("working", "OMP in Tern") for pane in range(1, 5)})
+        self.assertEqual(sender.states(), ["blocked", "working", "working", "working", "working"])
+        snapshot(c, gen, epoch, 3, [])
+        self.assertEqual(sender.shown(), {})
+        self.assertEqual(sender.states()[-4:], ["clear"] * 4)
 
     def test_duplicate_pane_ids_in_one_snapshot_reduce_once(self):
         c, _, _, _, _ = make_coordinator()
@@ -48,7 +52,8 @@ class ReductionThroughCoordinatorTest(unittest.TestCase):
         activate(c, [idle(1)])
         self.assertEqual(combined_mode(c), "idle_ready")
         self.assertEqual(rows(c), [("local", "1", "idle_ready", None)])
-        self.assertNotIn("completed", sender.modes_for("events.sock"))
+        self.assertEqual(sender.states(), ["idle"])
+        self.assertEqual(sender.shown(), {scope(1): ("idle", "OMP in Tern")})
 
     def test_disjoint_windows_both_contribute(self):
         c, _, _, _, _ = make_coordinator()

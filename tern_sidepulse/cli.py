@@ -16,13 +16,13 @@ from . import PROTOCOL_SCHEMA, VERSION
 from .client import CoordinatorUnavailable, Settings, request
 from .jsonio import load_json
 from .limits import Limits
-from .paths import runtime_dir, sidepulse_service_sockets, sidepulse_ui_sockets
+from .paths import runtime_dir, sidepulse_program_sockets
 from .storage import is_disabled, load_config, set_disabled
 
 MAX_STDIN_BYTES = 256 * 1024
 SUBCOMMANDS = ("register", "snapshot", "status", "enable", "disable", "resync", "doctor", "coordinator")
 SINGLE_OPTIONS = {"--data-dir": "data_dir", "--runtime-dir": "runtime_dir", "--limits": "limits"}
-REPEATED_OPTIONS = {"--ui-socket": "ui_socket", "--service-socket": "service_socket"}
+REPEATED_OPTIONS = {"--program-socket": "program_socket"}
 
 
 class UsageError(Exception):
@@ -47,7 +47,7 @@ def _paths_from(values: list[str] | None, env_name: str, config: dict, key: str,
 
 
 def resolve_settings(args: Args, bridge_path: Path) -> Settings:
-    """Precedence: flag > environment > <data>/config.json > default."""
+    """Precedence: flag > environment > <data>/config.json > default. ``labels`` comes from config.json only."""
     data_dir = args.data_dir or os.environ.get("TERN_PLUGIN_DATA")
     data_path = Path(data_dir).expanduser() if data_dir else None
     config = load_config(data_path) if data_path else {}
@@ -61,11 +61,11 @@ def resolve_settings(args: Args, bridge_path: Path) -> Settings:
     return Settings(
         data_dir=data_path,
         runtime_dir=runtime,
-        ui_sockets=_paths_from(args.ui_socket, "TERN_SIDEPULSE_UI_SOCKETS", config, "ui_sockets", sidepulse_ui_sockets()),
-        service_sockets=_paths_from(args.service_socket, "TERN_SIDEPULSE_SERVICE_SOCKETS", config, "service_sockets", sidepulse_service_sockets()),
+        program_sockets=_paths_from(args.program_socket, "TERN_SIDEPULSE_PROGRAM_SOCKETS", config, "program_sockets", sidepulse_program_sockets()),
         limits=limits,
         bridge_path=bridge_path,
         limits_json=limits_json,
+        labels=config.get("labels") is not False,
     )
 
 
@@ -86,14 +86,13 @@ def read_stdin_json() -> dict:
 
 @dataclass
 class Args:
-    """``bridge.py <command> [--data-dir D] [--runtime-dir R] [--ui-socket S]… [--service-socket S]… [--limits JSON]``."""
+    """``bridge.py <command> [--data-dir D] [--runtime-dir R] [--program-socket S]… [--limits JSON]``."""
 
     command: str
     data_dir: str | None = None
     runtime_dir: str | None = None
     limits: str | None = None
-    ui_socket: list[str] = field(default_factory=list)
-    service_socket: list[str] = field(default_factory=list)
+    program_socket: list[str] = field(default_factory=list)
 
 
 def parse_args(argv: list[str]) -> Args:
@@ -146,8 +145,8 @@ def main(argv: list[str], bridge_path: Path) -> int:
                 runtime=settings.runtime_dir,
                 data_dir=data_dir,
                 limits=settings.limits,
-                ui_sockets=settings.ui_sockets,
-                service_sockets=settings.service_sockets,
+                program_sockets=settings.program_sockets,
+                labels=settings.labels,
             )
         if command in ("register", "snapshot"):
             data_dir = require_data_dir(settings)
@@ -161,6 +160,7 @@ def main(argv: list[str], bridge_path: Path) -> int:
             _emit(request(settings, {"schema": PROTOCOL_SCHEMA, "op": "status"}, spawn=False, total_timeout=1.0))
             return 0
         if command == "resync":
+            require_data_dir(settings)  # a coordinator spawned without one could never start
             _emit(request(settings, {"schema": PROTOCOL_SCHEMA, "op": "resync"}, spawn=True))
             return 0
         if command == "disable":

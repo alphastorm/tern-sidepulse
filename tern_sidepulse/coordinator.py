@@ -1,8 +1,9 @@
 """The local coordinator: observer generations, leases, outcome notices and per-pane rows.
 
 One process per user holds the singleton lock and serializes every state change. Complete
-window snapshots contribute rows keyed by host and pane; the transport owns delivery and any
-protocol-specific reduction. Labels stay in memory, never in reports, logs or acknowledgements.
+window snapshots contribute rows keyed by host and pane; the transport owns delivery, including
+a crashed predecessor's rows. Labels stay in memory and leave it only in SidePulse reports (unless
+config.json sets ``"labels": false``), never in logs, acknowledgements or status.
 """
 from __future__ import annotations
 
@@ -231,9 +232,6 @@ class Coordinator:
         }
         self.stop_requested = False
         self.stop_reason: str | None = None
-        # Clear whatever a previous coordinator left under the same identity before publishing.
-        self.transport.publish((), force=True)
-        self.transport.tick()
 
     # ---- generations ----------------------------------------------------------------------
 
@@ -420,7 +418,10 @@ class Coordinator:
             persisted = False
             self.log(f"could not persist the disabled latch: {type(exc).__name__}")
         self.recompute(self.clock.monotonic())
-        self.log("disabled: observers revoked, neutral requested")
+        # Exit once this answer is out: shutdown clears every row (a crashed predecessor's included), and the
+        # coordinator that `enable` lets the next snapshot start reads config.json afresh.
+        self.request_stop("disabled")
+        self.log("disabled: observers revoked, rows cleared, coordinator stopping")
         return {
             "disabled": True,
             "persisted": persisted,
@@ -594,18 +595,17 @@ class Coordinator:
         self.stop_reason = reason
 
     def shutdown(self) -> None:
-        """Neutralize once on the way out; bounded by the transport's per-family budget.
+        """Clear every row this install may show on the way out, tick after tick, within the transport's exit budget.
 
-        This is the last attempt this process will ever make, so retry spacing after a recent
-        failure must not skip it: a receiver that came back on the same socket would otherwise
-        keep the active mode until the next coordinator start.
+        This is the last attempt this process will ever make, so retry spacing after a recent failure must
+        not skip it; a send that fails ends it. Scopes it cannot clear stay in the ledger for the next coordinator.
         """
         for observer in list(self.observers.values()):
             self._note_retired(observer.generation, "shutdown")
         self.observers.clear()
         self.rows = ()
-        self.transport.publish((), force=not self.transport.neutral_delivered())
-        self.transport.tick(immediate=True)
+        self.transport.withdraw()
+        self.transport.drain()
 
     # ---- reporting ------------------------------------------------------------------------
 
@@ -657,7 +657,6 @@ class Coordinator:
             "rows": self.row_counts(),
             "rows_total": len(self.rows),
             "rows_labelled": sum(row.label is not None for row in self.rows),
-            "session_id": self.transport.session_id,
             "observers": observers,
             "tokens_outstanding": len(self.tokens),
             "generations_issued": self.generation_counter,

@@ -9,7 +9,7 @@
 -- labels refresh within one 5 s pass. It never submits prompts, approves anything, reads transcripts
 -- or changes layouts; it keeps only plain data between callbacks, never a `cx`, a row or timer handle.
 
-local VERSION = "0.1.0"
+local VERSION = "0.2.0"
 local DATA = tern.plugin.data
 local BRIDGE = tern.plugin.dir .. "/bridge.py"
 local COALESCE_MS = 75
@@ -180,7 +180,7 @@ local function cut_utf8(text: string, max_bytes: number): string
 	end
 	local cut = max_bytes + 1
 	local byte = text:byte(cut)
-	while byte ~= nil and byte >= 0x80 and byte <= 0xBF do
+	while cut > 1 and byte ~= nil and byte >= 0x80 and byte <= 0xBF do
 		cut -= 1
 		byte = text:byte(cut)
 	end
